@@ -21,10 +21,10 @@ impl EnemyKind {
     /// Pixels per second.
     pub fn speed(self) -> f32 {
         match self {
-            Self::Grunt => 60.0,
-            Self::Runner => 110.0,
-            Self::Tank => 38.0,
-            Self::Boss => 30.0,
+            Self::Grunt => 90.0,
+            Self::Runner => 160.0,
+            Self::Tank => 56.0,
+            Self::Boss => 35.0,
         }
     }
 
@@ -64,8 +64,8 @@ impl EnemyKind {
         }
     }
 
-    /// How strongly slows affect this enemy (1 = fully).
-    fn slow_resistance(self) -> f32 {
+    /// How strongly slows and stuns affect this enemy (1 = fully).
+    fn control_resistance(self) -> f32 {
         match self {
             Self::Boss => 0.5,
             _ => 1.0,
@@ -82,6 +82,11 @@ pub struct Enemy {
     pub max_hp: f32,
     pub slow_factor: f32,
     pub slow_timer: f32,
+    /// Extra damage taken while slowed.
+    pub brittle: f32,
+    pub stun_timer: f32,
+    pub burn_dps: f32,
+    pub burn_timer: f32,
     /// Distance walked along the path; towers target the enemy furthest ahead.
     pub traveled: f32,
     /// Time since last hit, used for a hit flash.
@@ -100,6 +105,10 @@ impl Enemy {
             max_hp: hp,
             slow_factor: 1.0,
             slow_timer: 0.0,
+            brittle: 0.0,
+            stun_timer: 0.0,
+            burn_dps: 0.0,
+            burn_timer: 0.0,
             traveled: 0.0,
             since_hit: 10.0,
         }
@@ -113,46 +122,96 @@ impl Enemy {
         self.slow_timer > 0.0
     }
 
+    pub fn stunned(&self) -> bool {
+        self.stun_timer > 0.0
+    }
+
+    pub fn burning(&self) -> bool {
+        self.burn_timer > 0.0
+    }
+
     pub fn speed(&self) -> f32 {
+        if self.stunned() {
+            return 0.0;
+        }
         let factor = if self.slowed() { self.slow_factor } else { 1.0 };
         self.kind.speed() * factor
     }
 
     pub fn hit(&mut self, damage: f32) {
-        self.hp -= damage;
+        let mult = if self.slowed() {
+            1.0 + self.brittle
+        } else {
+            1.0
+        };
+        self.hp -= damage * mult;
         self.since_hit = 0.0;
     }
 
-    pub fn apply_slow(&mut self, factor: f32, time: f32) {
-        let factor = 1.0 - (1.0 - factor) * self.kind.slow_resistance();
-        self.slow_factor = if self.slowed() {
-            self.slow_factor.min(factor)
+    pub fn apply_slow(&mut self, factor: f32, time: f32, brittle: f32) {
+        let factor = 1.0 - (1.0 - factor) * self.kind.control_resistance();
+        if self.slowed() {
+            self.slow_factor = self.slow_factor.min(factor);
+            self.brittle = self.brittle.max(brittle);
         } else {
-            factor
-        };
+            self.slow_factor = factor;
+            self.brittle = brittle;
+        }
         self.slow_timer = self.slow_timer.max(time);
     }
 
-    /// Moves along the path. Returns true once the enemy has reached the end.
+    pub fn apply_stun(&mut self, time: f32) {
+        let time = time * self.kind.control_resistance();
+        self.stun_timer = self.stun_timer.max(time);
+    }
+
+    pub fn apply_burn(&mut self, dps: f32, time: f32) {
+        self.burn_dps = if self.burning() {
+            self.burn_dps.max(dps)
+        } else {
+            dps
+        };
+        self.burn_timer = self.burn_timer.max(time);
+    }
+
+    /// Where this enemy will be after `t` seconds at its current speed.
+    pub fn predict(&self, t: f32, waypoints: &[Vec2]) -> Vec2 {
+        let mut pos = self.pos;
+        let mut next = self.next_waypoint;
+        walk(&mut pos, &mut next, self.speed() * t, waypoints);
+        pos
+    }
+
+    /// Moves along the path and ticks status effects. Returns true once the
+    /// enemy has reached the end.
     pub fn advance(&mut self, dt: f32, waypoints: &[Vec2]) -> bool {
-        self.slow_timer = (self.slow_timer - dt).max(0.0);
-        self.since_hit += dt;
-        let mut remaining = self.speed() * dt;
-        while remaining > 0.0 && self.next_waypoint < waypoints.len() {
-            let target = waypoints[self.next_waypoint];
-            let to_target = target - self.pos;
-            let dist = to_target.length();
-            if dist <= remaining {
-                self.pos = target;
-                self.traveled += dist;
-                remaining -= dist;
-                self.next_waypoint += 1;
-            } else {
-                self.pos += to_target / dist * remaining;
-                self.traveled += remaining;
-                remaining = 0.0;
-            }
+        if self.burning() {
+            self.hp -= self.burn_dps * dt.min(self.burn_timer);
         }
+        let distance = self.speed() * dt;
+        self.slow_timer = (self.slow_timer - dt).max(0.0);
+        self.stun_timer = (self.stun_timer - dt).max(0.0);
+        self.burn_timer = (self.burn_timer - dt).max(0.0);
+        self.since_hit += dt;
+        self.traveled += walk(&mut self.pos, &mut self.next_waypoint, distance, waypoints);
         self.next_waypoint >= waypoints.len()
     }
+}
+
+/// Moves `pos` up to `distance` along the path, returning how far it went.
+fn walk(pos: &mut Vec2, next: &mut usize, distance: f32, waypoints: &[Vec2]) -> f32 {
+    let mut remaining = distance;
+    while remaining > 0.0 && *next < waypoints.len() {
+        let to_target = waypoints[*next] - *pos;
+        let dist = to_target.length();
+        if dist <= remaining {
+            *pos = waypoints[*next];
+            remaining -= dist;
+            *next += 1;
+        } else {
+            *pos += to_target / dist * remaining;
+            remaining = 0.0;
+        }
+    }
+    distance - remaining
 }

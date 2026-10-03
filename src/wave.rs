@@ -10,7 +10,7 @@ pub struct Spawn {
 
 pub fn hp_multiplier(wave: u32) -> f32 {
     let w = wave.saturating_sub(1) as f32;
-    1.0 + 0.3 * w + 0.04 * w * w
+    1.0 + 0.2 * w + 0.025 * w * w
 }
 
 pub fn clear_bonus(wave: u32) -> u32 {

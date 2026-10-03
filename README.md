@@ -39,43 +39,69 @@ You start with 150 gold and 20 lives. Killing enemies earns gold, and
 clearing a wave pays a bonus. Each enemy that reaches the castle costs lives
 (tanks cost 2, bosses cost 10).
 
+Towers can be placed anywhere on the grass, as long as they don't touch the
+path or another tower.
+
 | Input | Action |
 | --- | --- |
-| `1`-`4` or sidebar buttons | Pick a tower to build |
-| Left click on grass | Build the picked tower (hold Shift to place several) |
-| Left click on a tower | Select it |
-| `U` | Upgrade selected tower (max level 3) |
+| `1`-`5` or sidebar buttons | Pick a tower to place |
+| Left click on grass | Place it (hold Shift to place several) |
+| Right click / `Esc` / Cancel button | Stop placing, or deselect |
+| Left click on a tower | Open its upgrade panel |
+| `,` `.` `/` or the path cards | Buy the next upgrade on path 1, 2 or 3 |
 | `S` / `Delete` | Sell selected tower for 70% of what you spent |
 | `Space` / `N` | Start the next wave |
+| `A` | Toggle auto play (next wave starts on its own) |
 | `F` | Cycle game speed (x1, x2, x3) |
 | `P` | Pause |
-| Right click / `Esc` | Cancel selection |
+| `M` | Switch map (before the first wave only) |
 | `R` | Restart after game over or victory |
 
 ### Towers
 
 | Tower | Cost | Notes |
 | --- | --- | --- |
-| Arrow | 50 | Fast-firing, single target |
+| Arrow | 50 | Arrows fly through their target and keep going 2 tiles, hitting everything on the way |
 | Cannon | 90 | Slow, splash damage |
-| Frost | 70 | Light damage, slows enemies (bosses resist half) |
-| Sniper | 120 | Long range, heavy damage |
+| Frost | 70 | Pulses to slow and damage every enemy in range. Holds fire while everything in range is already slowed |
+| Sniper | 120 | Global range, heavy damage, fires slowly |
+| Farm | 150 | No attack. Pays 30 gold every time a wave is cleared |
+
+### Upgrades
+
+Every tower has 3 upgrade paths with 4 tiers each. Like in BTD, you can only
+upgrade 2 of the 3 paths on a tower, and only one of them past tier 2. Tower
+labels such as `2-0-3` show the tiers bought on each path.
+
+| Tower | Path 1 | Path 2 | Path 3 |
+| --- | --- | --- | --- |
+| Arrow | Sharp Arrows: damage | Rapid Fire: speed and multi-shot | Long Shot: range and pierce |
+| Cannon | Big Bombs: damage, blast, stun | Rapid Reload: fire rate | Incendiary: burning |
+| Frost | Deep Freeze: stronger slow, freeze | Blizzard: range and pulse rate | Shatter: damage, slowed enemies take extra damage |
+| Sniper | Full Metal: damage, boss killer | Fast Firing: fire rate | Ricochet: bouncing shots, gold per wave |
+| Farm | Crops: more gold per wave | Market: gold for kills near the farm | Clinic: lives per wave |
 
 ### Enemies
 
 - **Grunt**: the standard enemy.
 - **Runner**: fast and fragile, arrives in bursts from wave 3.
 - **Tank**: slow and tough, from wave 5.
-- **Boss**: shows up every 5th wave, more each time.
+- **Boss**: shows up every 5th wave, more each time. Half as affected by slows and stuns.
 
 Enemy health grows every wave.
+
+### Maps
+
+- **Sketch** (default): a long path that loops over itself twice.
+- **Zigzag**: a short path, so enemies reach the castle much sooner. Harder.
 
 ## Code layout
 
 - `src/main.rs`: window setup and main loop
 - `src/game.rs`: game state and simulation (spawning, targeting, projectiles, economy)
-- `src/map.rs`: grid, path and layout constants
-- `src/tower.rs`, `src/enemy.rs`: unit stats and behavior
+- `src/map.rs`: maps, path geometry and layout constants
+- `src/tower.rs`: tower stats, upgrade paths and upgrade rules
+- `src/enemy.rs`: enemy stats, movement and status effects
 - `src/wave.rs`: wave composition and difficulty scaling
 - `src/ui.rs`: input handling and button layout
 - `src/render.rs`: all drawing
