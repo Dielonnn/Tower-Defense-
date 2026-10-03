@@ -13,7 +13,7 @@ pub const SELL_RATIO: f32 = 0.7;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TowerKind {
     Arrow,
-    MinuteMan,
+    Mercenary,
     Cannon,
     Frost,
     Sniper,
@@ -51,7 +51,7 @@ const ARROW_UPGRADES: [[Upgrade; 4]; PATHS] = [
     ],
 ];
 
-const MINUTEMAN_UPGRADES: [[Upgrade; 4]; PATHS] = [
+const MERCENARY_UPGRADES: [[Upgrade; 4]; PATHS] = [
     [
         up("Long Rifle", "+0.8 range, +6 damage", 90),
         up("Scoped Rifle", "+12 dmg, +0.6 range", 220),
@@ -80,10 +80,10 @@ const CANNON_UPGRADES: [[Upgrade; 4]; PATHS] = [
         up("Earthshaker", "+120 dmg, stuns 0.6s", 1500),
     ],
     [
-        up("Faster Reload", "Shoots 15% faster", 120),
-        up("Twin Barrels", "Shoots 25% faster", 260),
-        up("Auto-Loader", "Shoots 35% faster", 650),
-        up("Bombardier", "40% faster, +1 range", 1600),
+        up("Faster Reload", "15% faster, +25% vs heavy", 120),
+        up("Twin Barrels", "25% faster, +50% vs heavy", 260),
+        up("Auto-Loader", "35% faster, 2x vs heavy", 650),
+        up("Bombardier", "40% faster, 3x vs heavy", 1600),
     ],
     [
         up("Fire Bombs", "Burns 5/s for 3s", 120),
@@ -159,7 +159,7 @@ const FARM_UPGRADES: [[Upgrade; 4]; PATHS] = [
 impl TowerKind {
     pub const ALL: [TowerKind; 6] = [
         Self::Arrow,
-        Self::MinuteMan,
+        Self::Mercenary,
         Self::Cannon,
         Self::Frost,
         Self::Sniper,
@@ -169,7 +169,7 @@ impl TowerKind {
     pub fn name(self) -> &'static str {
         match self {
             Self::Arrow => "Arrow",
-            Self::MinuteMan => "Minute Man",
+            Self::Mercenary => "Mercenary",
             Self::Cannon => "Cannon",
             Self::Frost => "Frost",
             Self::Sniper => "Sniper",
@@ -180,7 +180,7 @@ impl TowerKind {
     pub fn description(self) -> &'static str {
         match self {
             Self::Arrow => "Pierces 2 tiles behind",
-            Self::MinuteMan => "Rifleman, 3 gun builds",
+            Self::Mercenary => "Gun for hire, 3 builds",
             Self::Cannon => "Slow, splash damage",
             Self::Frost => "Freezes all in range",
             Self::Sniper => "Global range, big hits",
@@ -191,7 +191,7 @@ impl TowerKind {
     pub fn cost(self) -> u32 {
         match self {
             Self::Arrow => 50,
-            Self::MinuteMan => 60,
+            Self::Mercenary => 60,
             Self::Cannon => 90,
             Self::Frost => 70,
             Self::Sniper => 120,
@@ -202,7 +202,7 @@ impl TowerKind {
     pub fn color(self) -> Color {
         match self {
             Self::Arrow => Color::from_rgba(230, 190, 70, 255),
-            Self::MinuteMan => Color::from_rgba(60, 100, 190, 255),
+            Self::Mercenary => Color::from_rgba(105, 120, 65, 255),
             Self::Cannon => Color::from_rgba(200, 90, 60, 255),
             Self::Frost => Color::from_rgba(110, 200, 240, 255),
             Self::Sniper => Color::from_rgba(170, 120, 220, 255),
@@ -213,7 +213,7 @@ impl TowerKind {
     pub fn path_names(self) -> [&'static str; PATHS] {
         match self {
             Self::Arrow => ["Sharp Arrows", "Rapid Fire", "Long Shot"],
-            Self::MinuteMan => ["Rifle", "Pistols", "Gunner"],
+            Self::Mercenary => ["Rifle", "Pistols", "Gunner"],
             Self::Cannon => ["Big Bombs", "Rapid Reload", "Incendiary"],
             Self::Frost => ["Deep Freeze", "Frostbite", "Shatter"],
             Self::Sniper => ["Full Metal", "Fast Firing", "Ricochet"],
@@ -224,7 +224,7 @@ impl TowerKind {
     pub fn upgrades(self) -> &'static [[Upgrade; 4]; PATHS] {
         match self {
             Self::Arrow => &ARROW_UPGRADES,
-            Self::MinuteMan => &MINUTEMAN_UPGRADES,
+            Self::Mercenary => &MERCENARY_UPGRADES,
             Self::Cannon => &CANNON_UPGRADES,
             Self::Frost => &FROST_UPGRADES,
             Self::Sniper => &SNIPER_UPGRADES,
@@ -232,17 +232,22 @@ impl TowerKind {
         }
     }
 
+    /// Position in `ALL`.
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|&k| k == self).unwrap_or(0)
+    }
+
     /// Whether the tower picks a single target (and so has a targeting mode).
     pub fn has_targeting(self) -> bool {
         matches!(
             self,
-            Self::Arrow | Self::MinuteMan | Self::Cannon | Self::Sniper
+            Self::Arrow | Self::Mercenary | Self::Cannon | Self::Sniper
         )
     }
 
     /// Cheap, reliable towers to open a game with.
     pub fn is_starter(self) -> bool {
-        matches!(self, Self::Arrow | Self::MinuteMan)
+        matches!(self, Self::Arrow | Self::Mercenary)
     }
 
     /// Debuff towers only fire when an enemy in range lacks their debuff.
@@ -260,7 +265,7 @@ impl TowerKind {
                 pierce: 2.0 * TILE,
                 ..Stats::default()
             },
-            Self::MinuteMan => Stats {
+            Self::Mercenary => Stats {
                 damage: 12.0,
                 range: 2.8 * TILE,
                 cooldown: 0.85,
@@ -271,7 +276,7 @@ impl TowerKind {
                 range: 2.5 * TILE,
                 cooldown: 1.3,
                 projectile_speed: 320.0,
-                splash: 0.9 * TILE,
+                splash: 1.2 * TILE,
                 ..Stats::default()
             },
             Self::Frost => Stats {
@@ -303,7 +308,21 @@ impl TowerKind {
                 apply_upgrade(self, path, t, &mut s);
             }
         }
+        let scale = self.damage_scale();
+        s.damage *= scale;
+        s.burn_dps *= scale;
         s
+    }
+
+    /// Overall damage tuning per tower, on top of the numbers above. The
+    /// starter towers and cannon are boosted so they can carry a game.
+    fn damage_scale(self) -> f32 {
+        match self {
+            // Tuned with a bot: mixes of these three now clear wave 30 on
+            // Sketch in most builds it tries.
+            Self::Arrow | Self::Mercenary | Self::Cannon => 1.5,
+            _ => 1.0,
+        }
     }
 }
 
@@ -356,10 +375,21 @@ fn apply_upgrade(kind: TowerKind, path: usize, tier: u8, s: &mut Stats) {
             s.damage += 120.0;
             s.stun_time = 0.6;
         }
-        (Cannon, 1, 0) => s.cooldown *= 0.85,
-        (Cannon, 1, 1) => s.cooldown *= 0.75,
-        (Cannon, 1, 2) => s.cooldown *= 0.65,
+        // Rapid Reload also hits tanks and bosses ("heavy" enemies) harder.
+        (Cannon, 1, 0) => {
+            s.cooldown *= 0.85;
+            s.heavy_mult = 1.25;
+        }
+        (Cannon, 1, 1) => {
+            s.cooldown *= 0.75;
+            s.heavy_mult = 1.5;
+        }
+        (Cannon, 1, 2) => {
+            s.cooldown *= 0.65;
+            s.heavy_mult = 2.0;
+        }
         (Cannon, 1, 3) => {
+            s.heavy_mult = 3.0;
             s.cooldown *= 0.6;
             s.range += TILE;
         }
@@ -458,39 +488,39 @@ fn apply_upgrade(kind: TowerKind, path: usize, tier: u8, s: &mut Stats) {
             s.buff_radius += 0.4 * TILE;
         }
 
-        (MinuteMan, 0, 0) => {
+        (Mercenary, 0, 0) => {
             s.range += 0.8 * TILE;
             s.damage += 6.0;
         }
-        (MinuteMan, 0, 1) => {
+        (Mercenary, 0, 1) => {
             s.damage += 12.0;
             s.range += 0.6 * TILE;
         }
-        (MinuteMan, 0, 2) => {
+        (Mercenary, 0, 2) => {
             s.damage += 25.0;
             s.penetrate = 2;
         }
-        (MinuteMan, 0, 3) => {
+        (Mercenary, 0, 3) => {
             s.damage += 70.0;
             s.boss_mult = 2.0;
         }
-        (MinuteMan, 1, 0) => s.cooldown /= 1.3,
-        (MinuteMan, 1, 1) => s.targets = 2,
-        (MinuteMan, 1, 2) => s.cooldown /= 1.4,
-        (MinuteMan, 1, 3) => {
+        (Mercenary, 1, 0) => s.cooldown /= 1.3,
+        (Mercenary, 1, 1) => s.targets = 2,
+        (Mercenary, 1, 2) => s.cooldown /= 1.4,
+        (Mercenary, 1, 3) => {
             s.targets = 4;
             s.damage += 10.0;
         }
-        (MinuteMan, 2, 0) => s.cooldown /= 1.25,
-        (MinuteMan, 2, 1) => {
+        (Mercenary, 2, 0) => s.cooldown /= 1.25,
+        (Mercenary, 2, 1) => {
             s.cooldown /= 2.5;
             s.damage *= 0.6;
         }
-        (MinuteMan, 2, 2) => {
+        (Mercenary, 2, 2) => {
             s.slow = 0.75;
             s.slow_time = 0.8;
         }
-        (MinuteMan, 2, 3) => {
+        (Mercenary, 2, 3) => {
             s.cooldown /= 2.0;
             s.damage += 8.0;
         }
@@ -563,11 +593,13 @@ pub struct Stats {
     pub stun_time: f32,
     /// Extra enemies a sniper shot bounces to.
     pub bounces: u32,
-    /// Separate enemies a Minute Man shoots per volley.
+    /// Separate enemies a Mercenary shoots per volley.
     pub targets: u32,
-    /// Extra enemies a Minute Man bullet passes through.
+    /// Extra enemies a Mercenary bullet passes through.
     pub penetrate: u32,
     pub boss_mult: f32,
+    /// Damage multiplier against tanks and bosses.
+    pub heavy_mult: f32,
     /// Gold paid when a wave is cleared.
     pub income: u32,
     /// Support farms boost towers within `buff_radius` by these fractions.
@@ -601,6 +633,7 @@ impl Default for Stats {
             targets: 1,
             penetrate: 0,
             boss_mult: 1.0,
+            heavy_mult: 1.0,
             income: 0,
             buff_radius: 0.0,
             buff_speed: 0.0,
@@ -626,6 +659,9 @@ pub struct Tower {
     /// Time since the last shot, used for recoil and muzzle flash.
     pub since_shot: f32,
     pub targeting: Targeting,
+    /// Total damage this tower has dealt.
+    #[serde(default)]
+    pub damage_dealt: f32,
 }
 
 impl Tower {
@@ -640,6 +676,7 @@ impl Tower {
             invested: kind.cost(),
             since_shot: 10.0,
             targeting: Targeting::First,
+            damage_dealt: 0.0,
         }
     }
 

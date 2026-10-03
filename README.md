@@ -39,7 +39,8 @@ no installer or extra files needed.
 
 ## How to play
 
-The game opens on the main menu. Pick a map (Sketch or Castle) and a mode
+The game opens on the main menu. Pick a map (Sketch, Moon or Castle, marked
+Easy, Medium and Hard) and a mode
 (Normal or Sandbox), then press **Play**, or host or join a party.
 
 You start with 300 gold and 100 lives. Killing enemies earns gold, and
@@ -62,6 +63,7 @@ path or another tower.
 | `A` | Toggle auto play (next wave starts on its own) |
 | `F` | Cycle game speed (x1, x2, x3) |
 | `P` | Pause |
+| `D` or Stats button | Damage meter: towers owned and damage dealt per tower type |
 | `Esc` (nothing selected) or Settings button | Open the settings menu |
 | `R` / Retry button | After losing: rewind to just before the lost wave and try it again |
 | `Enter` / New game button | Start over after losing or winning |
@@ -102,13 +104,13 @@ spawned enemies are, up to wave 99) and clear the field.
 | Tower | Cost | Notes |
 | --- | --- | --- |
 | Arrow (starter) | 50 | Arrows fly through their target and keep going 2 tiles, hitting everything on the way. Multi-shot upgrades fire a tight parallel volley |
-| Minute Man (starter) | 60 | A rifleman with three gun builds: rifle, dual pistols or light machine gun |
-| Cannon | 90 | Slow, splash damage |
+| Mercenary (starter) | 60 | Gun for hire with three builds: rifle, dual pistols or light machine gun |
+| Cannon | 90 | Slow, big splash damage |
 | Frost | 70 | Pulses to freeze every enemy in range. A thawed enemy can't be refrozen for 1.5s. Holds fire while nothing in range can be frozen |
 | Sniper | 120 | Global range, heavy damage, fires slowly |
 | Farm | 150 | No attack. Pays 40 gold every time a wave is cleared |
 
-Arrow, Minute Man, Cannon and Sniper have a targeting mode. Frost hits everything in
+Arrow, Mercenary, Cannon and Sniper have a targeting mode. Frost hits everything in
 range, so it doesn't need one.
 
 ### Upgrades
@@ -120,11 +122,11 @@ labels such as `2-0-3` show the tiers bought on each path.
 | Tower | Path 1 | Path 2 | Path 3 |
 | --- | --- | --- | --- |
 | Arrow | Sharp Arrows: damage | Rapid Fire: speed and multi-shot | Long Shot: range and pierce |
-| Minute Man | Rifle: range, damage, armor-piercing rounds, boss killer | Pistols: dual wield, shoots several targets at once | Gunner: light machine gun, very fast fire, suppressing slow |
-| Cannon | Big Bombs: damage, blast, stun | Rapid Reload: fire rate | Incendiary: burning |
+| Mercenary | Rifle: range, damage, armor-piercing rounds, boss killer | Pistols: dual wield, shoots several targets at once | Gunner: light machine gun, very fast fire, suppressing slow |
+| Cannon | Big Bombs: damage, blast, stun | Rapid Reload: fire rate, up to 3x damage to tanks and bosses | Incendiary: burning |
 | Frost | Deep Freeze: longer freezes, faster pulses | Frostbite: slows enemies after they thaw | Shatter: damage, hit enemies take extra damage |
 | Sniper | Full Metal: damage, boss killer | Fast Firing: fire rate | Ricochet: bouncing shots, gold per wave |
-| Farm | Crops: more gold per wave | Bank: interest on your gold each wave | Support: boosts attack speed, range and damage of towers nearby (frost-sized radius); buffed towers show a green arrow badge. Each tier also widens its reach |
+| Farm | Crops: more gold per wave | Bank: interest on your gold each wave | Support: boosts attack speed, range and damage of towers nearby (frost-sized radius); buffed towers show a green arrow badge, and a tower you're placing shows it too when it would be buffed. Each tier also widens its reach |
 
 ### Enemies
 
@@ -137,11 +139,12 @@ Enemy health grows every wave.
 
 ### Maps
 
-- **Sketch** (default): a long meadow path that loops over itself twice, with trees and rocks.
-- **Castle**: a throne room. The track is a royal rug lined with torches, and
+- **Sketch** (Easy, default): a long meadow path that loops over itself twice, with trees, rocks and a pond.
+- **Moon** (Medium): rover tracks snaking between craters, with a lander and a lunar base to defend.
+- **Castle** (Hard): a throne room. The track is a royal rug lined with torches, and
   the path is shorter, so enemies reach the throne sooner. Harder.
 
-Trees, rocks, torches and pillars block tower placement.
+Trees, rocks, ponds, torches, pillars, suits of armor, craters and the lander block tower placement.
 
 ## Code layout
 

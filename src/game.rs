@@ -17,7 +17,7 @@ pub const AUTO_DELAY: f32 = 1.5;
 const BOUNCE_RANGE: f32 = 2.5 * TILE;
 /// Highest wave the sandbox level selector goes to.
 pub const SANDBOX_MAX_WAVE: u32 = 999;
-/// How far a Minute Man's AP bullet keeps going past its target.
+/// How far a Mercenary's AP bullet keeps going past its target.
 const PENETRATE_RANGE: f32 = 1.5 * TILE;
 /// Gap between parallel arrows from multi-shot upgrades.
 const ARROW_SPACING: f32 = 7.0;
@@ -90,6 +90,9 @@ pub enum Shot {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Projectile {
+    /// Tower that fired it, credited with its damage.
+    #[serde(default)]
+    pub source: u32,
     pub pos: Vec2,
     pub prev_pos: Vec2,
     pub stats: Stats,
@@ -167,6 +170,10 @@ pub struct Game {
     pub map: Map,
     pub map_index: usize,
     pub towers: Vec<Tower>,
+    /// Damage dealt by towers that have since been sold, per tower type
+    /// (indexed like `TowerKind::ALL`), so the damage meter keeps it.
+    #[serde(default)]
+    pub sold_damage: Vec<f32>,
     pub enemies: Vec<Enemy>,
     pub projectiles: Vec<Projectile>,
     pub effects: Vec<Effect>,
@@ -212,6 +219,9 @@ pub struct Game {
     /// Which settings slider is being dragged.
     #[serde(skip)]
     pub dragging: Option<usize>,
+    /// Damage meter open.
+    #[serde(skip)]
+    pub show_stats: bool,
     /// Sounds produced since the main loop last played them.
     #[serde(skip)]
     pub sounds: Vec<Sfx>,
@@ -245,6 +255,7 @@ impl Game {
             map: Map::new(map_index),
             map_index,
             towers: Vec::new(),
+            sold_damage: vec![0.0; TowerKind::ALL.len()],
             enemies: Vec::new(),
             projectiles: Vec::new(),
             effects: Vec::new(),
@@ -273,6 +284,7 @@ impl Game {
             tower_volume: DEFAULT_VOLUME,
             game_volume: DEFAULT_VOLUME,
             dragging: None,
+            show_stats: false,
             sounds: Vec::new(),
             outbox: Vec::new(),
             request: None,
@@ -306,6 +318,7 @@ impl Game {
         self.tower_volume = old.tower_volume;
         self.game_volume = old.game_volume;
         self.dragging = old.dragging;
+        self.show_stats = old.show_stats;
         self.outbox = std::mem::take(&mut old.outbox);
         self.request = old.request.take();
         self.online = old.online;
@@ -468,6 +481,9 @@ impl Game {
             return;
         };
         let tower = self.towers.remove(i);
+        if let Some(slot) = self.sold_damage.get_mut(tower.kind.index()) {
+            *slot += tower.damage_dealt;
+        }
         let value = tower.sell_value();
         self.gold += value;
         self.sounds.push(Sfx::Sell);
@@ -675,14 +691,21 @@ impl Game {
     fn update_enemies(&mut self, dt: f32) {
         let waypoints = &self.map.waypoints;
         let mut leaked = 0;
+        let mut credits = Vec::new();
         self.enemies.retain_mut(|e| {
-            if e.advance(dt, waypoints) && e.alive() {
+            let reached = e.advance(dt, waypoints);
+            if e.burn_dealt > 0.0 {
+                credits.push((e.burn_source, e.burn_dealt));
+                e.burn_dealt = 0.0;
+            }
+            if reached && e.alive() {
                 leaked += e.kind.damage();
                 false
             } else {
                 true
             }
         });
+        self.credit(&credits);
         if leaked == 0 {
             return;
         }
@@ -734,7 +757,7 @@ impl Game {
                         continue;
                     }
                     for e in enemies.iter_mut().filter(|e| in_range(e)) {
-                        e.hit(stats.damage);
+                        tower.damage_dealt += e.hit(stats.damage);
                         e.apply_freeze(stats.freeze_time);
                         // Slows kick in once the enemy thaws.
                         if stats.slow < 1.0 {
@@ -764,10 +787,10 @@ impl Game {
                     tower.since_shot = 0.0;
                     sounds.push(Sfx::Sniper);
                     let muzzle = tower.pos + aim.normalize_or_zero() * 24.0;
-                    sniper_shot(enemies, effects, first, muzzle, &stats);
+                    tower.damage_dealt += sniper_shot(enemies, effects, first, muzzle, &stats);
                 }
 
-                TowerKind::MinuteMan => {
+                TowerKind::Mercenary => {
                     let ranked = rank_targets(enemies, &in_range, tower.targeting, tower.pos);
                     let Some(&first) = ranked.first() else {
                         continue;
@@ -781,7 +804,8 @@ impl Game {
                     tower.since_shot = 0.0;
                     sounds.push(Sfx::Gunshot);
                     for &i in ranked.iter().take(stats.targets.max(1) as usize) {
-                        minuteman_shot(enemies, effects, i, tower.pos, &stats);
+                        tower.damage_dealt +=
+                            mercenary_shot(enemies, effects, i, tower.pos, &stats);
                     }
                 }
 
@@ -810,6 +834,7 @@ impl Game {
                         sounds.push(Sfx::Cannon);
                         let muzzle = tower.pos + dir * 18.0;
                         projectiles.push(Projectile {
+                            source: tower.id,
                             pos: muzzle,
                             prev_pos: muzzle,
                             stats,
@@ -829,6 +854,7 @@ impl Game {
                         let offset = (k as f32 - (n - 1) as f32 / 2.0) * ARROW_SPACING;
                         let muzzle = tower.pos + dir * 16.0 + side * offset;
                         projectiles.push(Projectile {
+                            source: tower.id,
                             pos: muzzle,
                             prev_pos: muzzle,
                             stats,
@@ -848,9 +874,11 @@ impl Game {
         let enemies = &mut self.enemies;
         let effects = &mut self.effects;
         let sounds = &mut self.sounds;
+        let mut credits = Vec::new();
         self.projectiles.retain_mut(|p| {
             p.prev_pos = p.pos;
             let s = p.stats;
+            let source = p.source;
             match &mut p.shot {
                 Shot::Arrow {
                     dir,
@@ -865,7 +893,7 @@ impl Game {
                             continue;
                         }
                         if distance_to_segment(e.pos, p.prev_pos, p.pos) <= e.kind.radius() + 3.0 {
-                            e.hit(s.damage);
+                            credits.push((source, e.hit(s.damage)));
                             hit.push(e.id);
                         }
                     }
@@ -884,9 +912,11 @@ impl Game {
                     p.pos = *target_pos;
                     for e in enemies.iter_mut().filter(|e| e.alive()) {
                         if e.pos.distance(p.pos) <= s.splash + e.kind.radius() {
-                            e.hit(s.damage);
+                            let heavy = matches!(e.kind, EnemyKind::Tank | EnemyKind::Boss);
+                            let mult = if heavy { s.heavy_mult } else { 1.0 };
+                            credits.push((source, e.hit(s.damage * mult)));
                             if s.burn_dps > 0.0 {
-                                e.apply_burn(s.burn_dps, s.burn_time);
+                                e.apply_burn(s.burn_dps, s.burn_time, source);
                             }
                             if s.stun_time > 0.0 {
                                 e.apply_stun(s.stun_time);
@@ -900,6 +930,39 @@ impl Game {
                 }
             }
         });
+        self.credit(&credits);
+    }
+
+    /// Adds damage to the towers that dealt it.
+    fn credit(&mut self, credits: &[(u32, f32)]) {
+        for &(id, amount) in credits {
+            if let Some(t) = self.towers.iter_mut().find(|t| t.id == id) {
+                t.damage_dealt += amount;
+            }
+        }
+    }
+
+    /// Damage dealt so far by each tower type, sold towers included.
+    pub fn damage_by_kind(&self) -> Vec<f32> {
+        let mut totals: Vec<f32> = TowerKind::ALL
+            .iter()
+            .map(|k| self.sold_damage.get(k.index()).copied().unwrap_or(0.0))
+            .collect();
+        for t in &self.towers {
+            totals[t.kind.index()] += t.damage_dealt;
+        }
+        totals
+    }
+
+    /// Whether a tower placed at `pos` would get a support farm's buff.
+    pub fn buffed_at(&self, kind: TowerKind, pos: Vec2) -> bool {
+        kind != TowerKind::Farm
+            && self.towers.iter().any(|f| {
+                let s = f.stats();
+                f.kind == TowerKind::Farm
+                    && s.buff_radius > 0.0
+                    && f.pos.distance(pos) <= s.buff_radius
+            })
     }
 
     fn collect_dead(&mut self) {
@@ -1021,15 +1084,16 @@ fn pick_target(
     rank_targets(enemies, filter, mode, origin).first().copied()
 }
 
-/// A Minute Man bullet: instant hit on `target`, optionally passing through
+/// A Mercenary bullet: instant hit on `target`, optionally passing through
 /// enemies right behind it.
-fn minuteman_shot(
+fn mercenary_shot(
     enemies: &mut [Enemy],
     effects: &mut Vec<Effect>,
     target: usize,
     from: Vec2,
     s: &Stats,
-) {
+) -> f32 {
+    let mut dealt = 0.0;
     let target_pos = enemies[target].pos;
     let dir = (target_pos - from).normalize_or_zero();
     let muzzle = from + dir * 20.0;
@@ -1057,7 +1121,7 @@ fn minuteman_shot(
         } else {
             1.0
         };
-        e.hit(s.damage * mult);
+        dealt += e.hit(s.damage * mult);
         if s.slow < 1.0 {
             e.apply_slow(s.slow, s.slow_time);
         }
@@ -1070,6 +1134,7 @@ fn minuteman_shot(
         tracer_end,
         Color::from_rgba(255, 225, 140, 255),
     ));
+    dealt
 }
 
 /// Instant hit on `first`, then bounces to nearby enemies.
@@ -1079,7 +1144,8 @@ fn sniper_shot(
     first: usize,
     muzzle: Vec2,
     s: &Stats,
-) {
+) -> f32 {
+    let mut dealt = 0.0;
     let tracer = Color::from_rgba(230, 200, 255, 255);
     let mut hit = vec![first];
     let mut from = muzzle;
@@ -1091,7 +1157,7 @@ fn sniper_shot(
         } else {
             1.0
         };
-        e.hit(s.damage * mult);
+        dealt += e.hit(s.damage * mult);
         effects.push(Effect::line(from, e.pos, tracer));
         from = e.pos;
         if hit.len() > s.bounces as usize {
@@ -1108,6 +1174,7 @@ fn sniper_shot(
         hit.push(i);
         current = i;
     }
+    dealt
 }
 
 #[cfg(test)]
@@ -1483,10 +1550,10 @@ pub mod tests {
     }
 
     #[test]
-    fn minute_man_dual_pistols_shoot_two_targets() {
+    fn mercenary_dual_pistols_shoot_two_targets() {
         let mut game = Game::new();
         let origin = vec2(500.0, 300.0);
-        add_tower(&mut game, TowerKind::MinuteMan, origin);
+        add_tower(&mut game, TowerKind::Mercenary, origin);
         game.towers[0].tiers = [0, 2, 0];
         let a = enemy_at(&mut game, EnemyKind::Tank, origin + vec2(60.0, 0.0));
         let b = enemy_at(&mut game, EnemyKind::Tank, origin + vec2(-60.0, 0.0));
@@ -1504,10 +1571,10 @@ pub mod tests {
     }
 
     #[test]
-    fn minute_man_ap_rounds_pierce() {
+    fn mercenary_ap_rounds_pierce() {
         let mut game = Game::new();
         let origin = vec2(500.0, 300.0);
-        add_tower(&mut game, TowerKind::MinuteMan, origin);
+        add_tower(&mut game, TowerKind::Mercenary, origin);
         game.towers[0].tiers = [3, 0, 0];
         let ids: Vec<u32> = (0..4)
             .map(|k| {

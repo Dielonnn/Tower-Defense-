@@ -97,6 +97,10 @@ pub struct Enemy {
     pub stun_timer: f32,
     pub burn_dps: f32,
     pub burn_timer: f32,
+    /// Tower that set this enemy on fire, and burn damage not yet credited.
+    pub burn_source: u32,
+    #[serde(skip)]
+    pub burn_dealt: f32,
     /// Distance walked along the path; towers target the enemy furthest ahead.
     pub traveled: f32,
     /// Time since last hit, used for a hit flash.
@@ -122,6 +126,8 @@ impl Enemy {
             stun_timer: 0.0,
             burn_dps: 0.0,
             burn_timer: 0.0,
+            burn_source: 0,
+            burn_dealt: 0.0,
             traveled: 0.0,
             since_hit: 10.0,
         }
@@ -164,14 +170,18 @@ impl Enemy {
         self.kind.speed() * factor
     }
 
-    pub fn hit(&mut self, damage: f32) {
+    /// Deals damage and returns how much actually landed (no overkill), for
+    /// the damage meter.
+    pub fn hit(&mut self, damage: f32) -> f32 {
         let mult = if self.brittle_timer > 0.0 {
             1.0 + self.brittle
         } else {
             1.0
         };
+        let dealt = (damage * mult).min(self.hp.max(0.0));
         self.hp -= damage * mult;
         self.since_hit = 0.0;
+        dealt
     }
 
     pub fn apply_slow(&mut self, factor: f32, time: f32) {
@@ -209,7 +219,9 @@ impl Enemy {
         self.stun_timer = self.stun_timer.max(time);
     }
 
-    pub fn apply_burn(&mut self, dps: f32, time: f32) {
+    /// Sets the enemy alight. `source` is the tower id credited for the burn.
+    pub fn apply_burn(&mut self, dps: f32, time: f32, source: u32) {
+        self.burn_source = source;
         self.burn_dps = if self.burning() {
             self.burn_dps.max(dps)
         } else {
@@ -229,8 +241,10 @@ impl Enemy {
     /// Moves along the path and ticks status effects. Returns true once the
     /// enemy has reached the end.
     pub fn advance(&mut self, dt: f32, waypoints: &[Vec2]) -> bool {
-        if self.burning() {
-            self.hp -= self.burn_dps * dt.min(self.burn_timer);
+        if self.burning() && self.alive() {
+            let burn = (self.burn_dps * dt.min(self.burn_timer)).min(self.hp);
+            self.hp -= burn;
+            self.burn_dealt += burn;
         }
         let distance = self.speed() * dt;
         // Slows only tick down once the enemy has thawed out.

@@ -94,6 +94,15 @@ pub fn auto_button() -> Rect {
     )
 }
 
+pub fn stats_button() -> Rect {
+    Rect::new(SCREEN_W - 460.0, 8.0, 100.0, 32.0)
+}
+
+/// The damage meter, drawn over the top right of the map.
+pub fn damage_meter() -> Rect {
+    Rect::new(MAP_W - 312.0, TOP_BAR + 10.0, 302.0, 84.0 + 6.0 * 30.0)
+}
+
 pub fn settings_button() -> Rect {
     Rect::new(SCREEN_W - 350.0, 8.0, 110.0, 32.0)
 }
@@ -200,48 +209,48 @@ pub fn guide_card(path: usize, tier: usize) -> Rect {
 // Main menu.
 
 pub fn lobby_panel() -> Rect {
-    Rect::new((SCREEN_W - 500.0) / 2.0, 140.0, 500.0, 530.0)
+    Rect::new((SCREEN_W - 800.0) / 2.0, 128.0, 800.0, 566.0)
 }
 
 pub fn lobby_map_card(i: usize) -> Rect {
     let p = lobby_panel();
-    Rect::new(p.x + 20.0 + i as f32 * 235.0, p.y + 40.0, 225.0, 76.0)
+    Rect::new(p.x + 20.0 + i as f32 * 258.0, p.y + 50.0, 244.0, 172.0)
 }
 
 pub fn lobby_mode_button(sandbox: bool) -> Rect {
     let p = lobby_panel();
     let i = if sandbox { 1.0 } else { 0.0 };
-    Rect::new(p.x + 20.0 + i * 235.0, p.y + 152.0, 225.0, 40.0)
+    Rect::new(p.x + 20.0 + i * 260.0, p.y + 266.0, 250.0, 42.0)
 }
 
 pub fn lobby_play() -> Rect {
     let p = lobby_panel();
-    Rect::new(p.x + 20.0, p.y + 212.0, 460.0, 52.0)
+    Rect::new(p.x + 20.0, p.y + 326.0, 760.0, 56.0)
 }
 
 pub fn lobby_host() -> Rect {
     let p = lobby_panel();
-    Rect::new(p.x + 20.0, p.y + 310.0, 460.0, 44.0)
+    Rect::new(p.x + 20.0, p.y + 428.0, 250.0, 44.0)
 }
 
 pub fn lobby_address() -> Rect {
     let p = lobby_panel();
-    Rect::new(p.x + 20.0, p.y + 364.0, 300.0, 44.0)
+    Rect::new(p.x + 290.0, p.y + 428.0, 330.0, 44.0)
 }
 
 pub fn lobby_join() -> Rect {
     let p = lobby_panel();
-    Rect::new(p.x + 330.0, p.y + 364.0, 150.0, 44.0)
+    Rect::new(p.x + 630.0, p.y + 428.0, 150.0, 44.0)
 }
 
 pub fn lobby_settings() -> Rect {
     let p = lobby_panel();
-    Rect::new(p.x + 20.0, p.y + 428.0, 225.0, 40.0)
+    Rect::new(p.x + 20.0, p.y + 492.0, 370.0, 40.0)
 }
 
 pub fn lobby_quit() -> Rect {
     let p = lobby_panel();
-    Rect::new(p.x + 255.0, p.y + 428.0, 225.0, 40.0)
+    Rect::new(p.x + 410.0, p.y + 492.0, 370.0, 40.0)
 }
 
 /// Main menu state.
@@ -365,6 +374,12 @@ pub fn handle_input(game: &mut Game) {
     if click && settings_button().contains(mouse) {
         game.menu = Some(Menu::Settings);
         return;
+    }
+    if (click && stats_button().contains(mouse)) || is_key_pressed(KeyCode::D) {
+        game.show_stats = !game.show_stats;
+        if click {
+            return;
+        }
     }
 
     if game.state != GameState::Playing {

@@ -93,6 +93,9 @@ pub fn draw(game: &Game) {
     draw_effects(game);
     draw_placement_preview(game, t);
     draw_party_badge(game);
+    if game.show_stats {
+        draw_damage_meter(game, t);
+    }
     draw_sidebar(game, t);
     draw_top_bar(game, t);
     draw_message(game);
@@ -142,21 +145,106 @@ fn text_right(text: &str, right: f32, y: f32, size: u16, color: Color) {
     draw_text(text, right - w, y, size as f32, color);
 }
 
+/// Quarter-circle fan, so rounded corners never overlap the edge rects.
+fn corner(c: Vec2, rad: f32, start_deg: f32, color: Color) {
+    let steps = 6;
+    for k in 0..steps {
+        let a0 = (start_deg + k as f32 * 90.0 / steps as f32).to_radians();
+        let a1 = (start_deg + (k + 1) as f32 * 90.0 / steps as f32).to_radians();
+        draw_triangle(
+            c,
+            c + vec2(a0.cos(), a0.sin()) * rad,
+            c + vec2(a1.cos(), a1.sin()) * rad,
+            color,
+        );
+    }
+}
+
+/// Filled rectangle with rounded corners.
+fn rounded(r: Rect, rad: f32, color: Color) {
+    let rad = rad.min(r.w / 2.0).min(r.h / 2.0);
+    draw_rectangle(r.x + rad, r.y, r.w - 2.0 * rad, r.h, color);
+    draw_rectangle(r.x, r.y + rad, rad, r.h - 2.0 * rad, color);
+    draw_rectangle(r.x + r.w - rad, r.y + rad, rad, r.h - 2.0 * rad, color);
+    corner(vec2(r.x + rad, r.y + rad), rad, 180.0, color);
+    corner(vec2(r.x + r.w - rad, r.y + rad), rad, 270.0, color);
+    corner(vec2(r.x + r.w - rad, r.y + r.h - rad), rad, 0.0, color);
+    corner(vec2(r.x + rad, r.y + r.h - rad), rad, 90.0, color);
+}
+
+/// Outline of a rounded rectangle.
+fn rounded_lines(r: Rect, rad: f32, thickness: f32, color: Color) {
+    let rad = rad.min(r.w / 2.0).min(r.h / 2.0);
+    draw_line(r.x + rad, r.y, r.x + r.w - rad, r.y, thickness, color);
+    draw_line(
+        r.x + rad,
+        r.y + r.h,
+        r.x + r.w - rad,
+        r.y + r.h,
+        thickness,
+        color,
+    );
+    draw_line(r.x, r.y + rad, r.x, r.y + r.h - rad, thickness, color);
+    draw_line(
+        r.x + r.w,
+        r.y + rad,
+        r.x + r.w,
+        r.y + r.h - rad,
+        thickness,
+        color,
+    );
+    let arcs = [
+        (vec2(r.x + rad, r.y + rad), 180.0),
+        (vec2(r.x + r.w - rad, r.y + rad), 270.0),
+        (vec2(r.x + r.w - rad, r.y + r.h - rad), 0.0),
+        (vec2(r.x + rad, r.y + r.h - rad), 90.0),
+    ];
+    for (c, start) in arcs {
+        for k in 0..6 {
+            let a0 = (start + k as f32 * 15.0_f32).to_radians();
+            let a1 = (start + (k + 1) as f32 * 15.0_f32).to_radians();
+            let p = c + vec2(a0.cos(), a0.sin()) * rad;
+            let q = c + vec2(a1.cos(), a1.sin()) * rad;
+            draw_line(p.x, p.y, q.x, q.y, thickness, color);
+        }
+    }
+}
+
+/// A rounded panel with a soft drop shadow.
 fn panel_rect(r: Rect, fill: Color, border: Color) {
-    draw_rectangle(r.x, r.y, r.w, r.h, fill);
-    draw_rectangle_lines(r.x, r.y, r.w, r.h, 2.0, border);
+    rounded(
+        Rect::new(r.x + 2.0, r.y + 3.0, r.w, r.h),
+        7.0,
+        Color::new(0.0, 0.0, 0.0, 0.18),
+    );
+    rounded(r, 7.0, fill);
+    rounded_lines(r, 7.0, 1.5, border);
 }
 
 fn button(rect: Rect, label: &str, enabled: bool, highlight: Color, t: &Theme) {
     let hover = enabled && rect.contains(mouse());
+    let pressed = hover && is_mouse_button_down(MouseButton::Left);
     let fill = match (enabled, hover) {
         (false, _) => t.panel_light,
         (true, true) => highlight,
         (true, false) => darken(highlight, 0.85),
     };
-    panel_rect(rect, fill, t.border);
+    let r = if pressed {
+        Rect::new(rect.x, rect.y + 1.0, rect.w, rect.h)
+    } else {
+        rect
+    };
+    panel_rect(r, fill, t.border);
+    if enabled {
+        // Glossy top half.
+        rounded(
+            Rect::new(r.x + 2.0, r.y + 2.0, r.w - 4.0, r.h / 2.0 - 2.0),
+            5.0,
+            Color::new(1.0, 1.0, 1.0, 0.10),
+        );
+    }
     let color = if enabled { WHITE } else { t.text_dim };
-    text_centered(label, rect.center(), 22, color);
+    text_centered(label, r.center(), 22, color);
 }
 
 // ---------------------------------------------------------------- maps
@@ -165,10 +253,16 @@ fn draw_map(map: &Map, time: f32, since_base_hit: f32, t: &Theme) {
     match map.theme() {
         MapTheme::Meadow => draw_meadow(map, time, t),
         MapTheme::Castle => draw_castle_hall(map, time, t),
+        MapTheme::Moon => draw_moon_surface(map, time, t),
     }
     let portal = map.portal;
     let pulse = (time * 3.0).sin() * 3.0;
     draw_circle(portal.x, portal.y, 16.0, with_alpha(PURPLE, 0.35));
+    for k in 0..3 {
+        let a = time * 2.0 + k as f32 * 2.1;
+        let p = portal + vec2(a.cos(), a.sin()) * 12.0;
+        draw_circle(p.x, p.y, 2.5, with_alpha(VIOLET, 0.9));
+    }
     draw_circle_lines(
         portal.x,
         portal.y,
@@ -183,7 +277,144 @@ fn draw_map(map: &Map, time: f32, since_base_hit: f32, t: &Theme) {
     match map.theme() {
         MapTheme::Meadow => draw_castle_base(map.base, time, since_base_hit),
         MapTheme::Castle => draw_throne(map.base, time, since_base_hit),
+        MapTheme::Moon => draw_moon_base(map.base, time, since_base_hit),
     }
+}
+
+fn draw_moon_surface(map: &Map, time: f32, t: &Theme) {
+    let (ground, dark, light) = if t.night {
+        (
+            Color::new(0.27, 0.28, 0.32, 1.0),
+            Color::new(0.20, 0.21, 0.25, 1.0),
+            Color::new(0.34, 0.35, 0.40, 1.0),
+        )
+    } else {
+        (
+            Color::new(0.62, 0.62, 0.65, 1.0),
+            Color::new(0.52, 0.52, 0.56, 1.0),
+            Color::new(0.72, 0.72, 0.75, 1.0),
+        )
+    };
+    // Space above the horizon: stars and the Earth.
+    let band = 30.0;
+    draw_rectangle(MAP_X, MAP_Y, MAP_W, band, Color::new(0.02, 0.02, 0.06, 1.0));
+    for i in 0..70 {
+        let x = MAP_X + hash(i as f32, 1.0) * MAP_W;
+        let y = MAP_Y + hash(i as f32, 2.0) * band;
+        let tw = 0.5 + 0.5 * (time * 2.0 + i as f32).sin();
+        draw_circle(x, y, 1.0, Color::new(1.0, 1.0, 1.0, 0.4 + 0.6 * tw));
+    }
+    let earth = vec2(MAP_X + MAP_W - 120.0, MAP_Y + band - 2.0);
+    draw_circle(earth.x, earth.y, 24.0, Color::new(0.20, 0.45, 0.85, 1.0));
+    draw_circle(
+        earth.x - 8.0,
+        earth.y - 6.0,
+        8.0,
+        Color::new(0.25, 0.65, 0.30, 1.0),
+    );
+    draw_circle(
+        earth.x + 9.0,
+        earth.y + 2.0,
+        6.0,
+        Color::new(0.25, 0.65, 0.30, 1.0),
+    );
+    draw_circle(
+        earth.x + 2.0,
+        earth.y - 14.0,
+        5.0,
+        Color::new(0.95, 0.95, 1.0, 0.8),
+    );
+    draw_rectangle(MAP_X, MAP_Y + band, MAP_W, MAP_H - band, ground);
+    draw_line(MAP_X, MAP_Y + band, MAP_X + MAP_W, MAP_Y + band, 2.0, light);
+    // Little craters and dust.
+    for &(p, r, shade) in map.decor.iter().filter(|d| d.0.y > MAP_Y + band + 4.0) {
+        if shade > 0.55 {
+            draw_circle(p.x + 1.0, p.y + 1.0, r * 0.8, light);
+            draw_circle(p.x, p.y, r * 0.7, dark);
+        } else {
+            draw_circle(p.x, p.y, 1.5 + shade * 2.0, dark);
+        }
+    }
+
+    // Rover track: packed dust with two tyre ruts and tread marks.
+    let wps = &map.waypoints;
+    stroke_path(wps, PATH_WIDTH + 6.0, dark);
+    stroke_path(wps, PATH_WIDTH, darken(ground, 0.9));
+    for w in wps.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let len = a.distance(b);
+        let dir = (b - a) / len;
+        let side = vec2(-dir.y, dir.x);
+        for off in [-9.0, 9.0] {
+            let p = a - dir * 9.0 + side * off;
+            let q = b + dir * 9.0 + side * off;
+            draw_line(p.x, p.y, q.x, q.y, 6.0, darken(ground, 0.75));
+            let mut d = 0.0;
+            while d < len {
+                let m = a + dir * d + side * off;
+                draw_line(
+                    m.x - side.x * 3.0,
+                    m.y - side.y * 3.0,
+                    m.x + side.x * 3.0,
+                    m.y + side.y * 3.0,
+                    1.5,
+                    darken(ground, 0.62),
+                );
+                d += 8.0;
+            }
+        }
+    }
+}
+
+fn draw_moon_base(base: Vec2, time: f32, since_base_hit: f32) {
+    let (shake, hit) = base_hit_shake(time, since_base_hit);
+    let p = base + shake;
+    let white = Color::new(0.92 + 0.08 * hit, 0.92 - 0.4 * hit, 0.95 - 0.4 * hit, 1.0);
+    // Solar panels.
+    for s in [-1.0, 1.0] {
+        let c = p + vec2(s * 30.0, 4.0);
+        draw_line(p.x, p.y + 4.0, c.x, c.y, 2.0, GRAY);
+        draw_rectangle(
+            c.x - 9.0,
+            c.y - 12.0,
+            18.0,
+            24.0,
+            Color::new(0.15, 0.25, 0.55, 1.0),
+        );
+        for k in 0..3 {
+            let y = c.y - 12.0 + k as f32 * 8.0;
+            draw_line(
+                c.x - 9.0,
+                y,
+                c.x + 9.0,
+                y,
+                1.0,
+                Color::new(0.5, 0.65, 0.95, 1.0),
+            );
+        }
+    }
+    // Dome.
+    draw_circle(p.x + 3.0, p.y + 4.0, 20.0, with_alpha(BLACK, 0.3));
+    draw_circle(p.x, p.y, 20.0, white);
+    draw_circle_lines(p.x, p.y, 20.0, 2.0, Color::new(0.5, 0.5, 0.55, 1.0));
+    draw_circle_lines(p.x, p.y, 12.0, 1.0, Color::new(0.6, 0.6, 0.65, 1.0));
+    draw_line(
+        p.x - 20.0,
+        p.y,
+        p.x + 20.0,
+        p.y,
+        1.0,
+        Color::new(0.6, 0.6, 0.65, 1.0),
+    );
+    draw_circle(p.x - 5.0, p.y - 6.0, 4.0, Color::new(0.5, 0.75, 1.0, 1.0));
+    // Antenna with a blinking light.
+    draw_line(p.x + 6.0, p.y - 12.0, p.x + 14.0, p.y - 34.0, 2.0, GRAY);
+    let blink = if (time * 2.0).fract() < 0.5 {
+        RED
+    } else {
+        MAROON
+    };
+    draw_circle(p.x + 14.0, p.y - 34.0, 3.0, blink);
 }
 
 fn draw_meadow(map: &Map, time: f32, t: &Theme) {
@@ -365,6 +596,14 @@ fn draw_prop(prop: &Prop, time: f32, t: &Theme) {
             draw_circle(p.x - 5.0 * s, p.y - 4.0 * s, 12.0 * s, mid);
             draw_circle(p.x + 6.0 * s, p.y - 2.0 * s, 10.0 * s, mid);
             draw_circle(p.x - 4.0 * s, p.y - 8.0 * s, 6.0 * s, light);
+            // A few fruit or blossoms on some trees.
+            if prop.seed > 0.5 {
+                for k in 0..3 {
+                    let a = prop.seed * 20.0 + k as f32 * 2.1;
+                    let q = p + vec2(a.cos(), a.sin()) * 10.0 * s;
+                    draw_circle(q.x, q.y, 2.2, Color::new(0.9, 0.25, 0.25, 1.0));
+                }
+            }
         }
         PropKind::Rock => {
             let rot = prop.seed * 90.0;
@@ -378,6 +617,45 @@ fn draw_prop(prop: &Prop, time: f32, t: &Theme) {
                 rot,
                 Color::new(0.68, 0.68, 0.70, 1.0),
             );
+            draw_circle(p.x + 3.0, p.y + 2.0, 1.5, Color::new(0.40, 0.40, 0.43, 1.0));
+        }
+        PropKind::Pond => {
+            let r = prop.radius;
+            draw_circle(p.x, p.y, r + 4.0, Color::new(0.76, 0.68, 0.48, 1.0));
+            let water = if t.night {
+                Color::new(0.10, 0.20, 0.35, 1.0)
+            } else {
+                Color::new(0.28, 0.55, 0.80, 1.0)
+            };
+            draw_circle(p.x, p.y, r, water);
+            draw_circle(p.x - 4.0, p.y - 4.0, r * 0.7, darken(water, 1.15));
+            for k in 0..3 {
+                let a = time * 0.8 + k as f32 * 2.0 + prop.seed * 10.0;
+                let ripple = (time * 1.5 + k as f32).fract();
+                let q = p + vec2(a.cos(), a.sin()) * r * 0.45;
+                draw_circle_lines(
+                    q.x,
+                    q.y,
+                    3.0 + ripple * 6.0,
+                    1.0,
+                    Color::new(1.0, 1.0, 1.0, 0.4 * (1.0 - ripple)),
+                );
+            }
+            for (dx, dy) in [(-12.0, 8.0), (10.0, -10.0)] {
+                draw_circle(p.x + dx, p.y + dy, 5.0, Color::new(0.25, 0.60, 0.25, 1.0));
+                draw_triangle(
+                    vec2(p.x + dx, p.y + dy),
+                    vec2(p.x + dx + 5.0, p.y + dy - 2.0),
+                    vec2(p.x + dx + 5.0, p.y + dy + 2.0),
+                    water,
+                );
+            }
+            draw_circle(
+                p.x + 11.0,
+                p.y - 12.0,
+                1.8,
+                Color::new(1.0, 0.75, 0.85, 1.0),
+            );
         }
         PropKind::Pillar => {
             draw_circle(p.x + 4.0, p.y + 5.0, 16.0, with_alpha(BLACK, 0.3));
@@ -385,6 +663,42 @@ fn draw_prop(prop: &Prop, time: f32, t: &Theme) {
             draw_circle(p.x, p.y, 13.0, darken(t.floor_a, 1.15));
             draw_circle_lines(p.x, p.y, 16.0, 2.0, t.mortar);
             draw_circle_lines(p.x, p.y, 8.0, 1.0, with_alpha(t.mortar, 0.6));
+        }
+        PropKind::Armor => {
+            draw_circle(p.x + 3.0, p.y + 4.0, 11.0, with_alpha(BLACK, 0.3));
+            draw_rectangle(
+                p.x - 12.0,
+                p.y + 6.0,
+                24.0,
+                6.0,
+                Color::new(0.35, 0.28, 0.20, 1.0),
+            );
+            draw_circle(p.x, p.y, 9.0, Color::new(0.70, 0.72, 0.76, 1.0));
+            draw_circle(p.x, p.y - 2.0, 6.0, Color::new(0.80, 0.82, 0.86, 1.0));
+            draw_line(
+                p.x - 4.0,
+                p.y - 2.0,
+                p.x + 4.0,
+                p.y - 2.0,
+                1.5,
+                Color::new(0.2, 0.2, 0.22, 1.0),
+            );
+            draw_line(
+                p.x + 11.0,
+                p.y + 10.0,
+                p.x + 11.0,
+                p.y - 18.0,
+                2.0,
+                Color::new(0.45, 0.32, 0.18, 1.0),
+            );
+            draw_triangle(
+                vec2(p.x + 8.0, p.y - 18.0),
+                vec2(p.x + 14.0, p.y - 18.0),
+                vec2(p.x + 11.0, p.y - 25.0),
+                Color::new(0.8, 0.8, 0.85, 1.0),
+            );
+            draw_circle(p.x - 9.0, p.y + 2.0, 5.0, RUG);
+            draw_circle_lines(p.x - 9.0, p.y + 2.0, 5.0, 1.5, RUG_GOLD);
         }
         PropKind::Torch => {
             let flicker = (time * 13.0 + prop.seed * 50.0).sin() * 0.5
@@ -402,7 +716,6 @@ fn draw_prop(prop: &Prop, time: f32, t: &Theme) {
                 26.0 + flicker * 2.0,
                 Color::new(1.0, 0.7, 0.3, glow),
             );
-            // Stand and bowl.
             draw_rectangle(
                 p.x - 2.0,
                 p.y - 2.0,
@@ -417,7 +730,6 @@ fn draw_prop(prop: &Prop, time: f32, t: &Theme) {
                 5.0,
                 Color::new(0.35, 0.3, 0.26, 1.0),
             );
-            // Flame.
             let h = 10.0 + flicker * 2.5;
             draw_triangle(
                 vec2(p.x - 5.0, p.y - 4.0),
@@ -431,6 +743,70 @@ fn draw_prop(prop: &Prop, time: f32, t: &Theme) {
                 vec2(p.x + flicker, p.y - 4.0 - h * 0.6),
                 Color::new(1.0, 0.85, 0.3, 1.0),
             );
+            // Rising embers.
+            for k in 0..2 {
+                let e = (time * 0.9 + prop.seed * 7.0 + k as f32 * 0.5).fract();
+                let q = p + vec2((e * 9.0 + k as f32).sin() * 3.0, -8.0 - e * 22.0);
+                draw_circle(q.x, q.y, 1.2, Color::new(1.0, 0.7, 0.2, 1.0 - e));
+            }
+        }
+        PropKind::Crater => {
+            let r = prop.radius;
+            let (rim, floor) = if t.night {
+                (
+                    Color::new(0.36, 0.37, 0.42, 1.0),
+                    Color::new(0.16, 0.17, 0.20, 1.0),
+                )
+            } else {
+                (
+                    Color::new(0.75, 0.75, 0.78, 1.0),
+                    Color::new(0.45, 0.45, 0.49, 1.0),
+                )
+            };
+            draw_circle(p.x, p.y, r + 3.0, rim);
+            draw_circle(p.x, p.y, r, floor);
+            draw_circle(p.x + r * 0.2, p.y + r * 0.2, r * 0.75, darken(floor, 1.12));
+            draw_circle(p.x - r * 0.35, p.y - r * 0.35, r * 0.15, darken(floor, 0.8));
+        }
+        PropKind::Lander => {
+            let gold = Color::new(0.85, 0.68, 0.25, 1.0);
+            for (dx, dy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+                let foot = p + vec2(dx, dy) * 20.0;
+                draw_line(p.x, p.y, foot.x, foot.y, 2.0, GRAY);
+                draw_circle(foot.x, foot.y, 3.0, LIGHTGRAY);
+            }
+            draw_poly(p.x, p.y, 8, 13.0, 22.5, gold);
+            draw_poly_lines(p.x, p.y, 8, 13.0, 22.5, 1.5, darken(gold, 0.6));
+            draw_rectangle(
+                p.x - 7.0,
+                p.y - 9.0,
+                14.0,
+                10.0,
+                Color::new(0.85, 0.85, 0.88, 1.0),
+            );
+            draw_circle(p.x, p.y - 5.0, 2.5, Color::new(0.2, 0.3, 0.5, 1.0));
+            draw_line(p.x + 7.0, p.y - 9.0, p.x + 13.0, p.y - 16.0, 1.5, GRAY);
+            draw_circle_lines(p.x + 13.0, p.y - 16.0, 3.0, 1.0, LIGHTGRAY);
+        }
+        PropKind::Flag => {
+            draw_line(p.x, p.y + 6.0, p.x, p.y - 22.0, 2.0, LIGHTGRAY);
+            let wave = (time * 3.0).sin() * 1.5;
+            let top = p + vec2(0.0, -22.0);
+            for k in 0..4 {
+                let c = if k % 2 == 0 {
+                    Color::new(0.85, 0.2, 0.2, 1.0)
+                } else {
+                    WHITE
+                };
+                draw_rectangle(
+                    top.x,
+                    top.y + k as f32 * 3.0 + wave * (k as f32 / 4.0),
+                    16.0,
+                    3.0,
+                    c,
+                );
+            }
+            draw_rectangle(top.x, top.y, 7.0, 6.0, Color::new(0.2, 0.3, 0.7, 1.0));
         }
     }
 }
@@ -575,8 +951,35 @@ fn draw_placement_preview(game: &Game, t: &Theme) {
     };
     let ok = game.can_place(m) && game.can_afford(kind.cost());
     let tint = if ok { WHITE } else { RED };
+    // Show where support farms reach, so it's easy to place inside a buff.
+    if kind != TowerKind::Farm {
+        for f in game.towers.iter().filter(|f| f.kind == TowerKind::Farm) {
+            let r = f.stats().buff_radius;
+            if r > 0.0 {
+                draw_circle(f.pos.x, f.pos.y, r, Color::new(0.2, 0.8, 0.3, 0.07));
+                draw_circle_lines(f.pos.x, f.pos.y, r, 1.5, Color::new(0.2, 0.8, 0.3, 0.45));
+            }
+        }
+    }
+    let buffed = game.buffed_at(kind, m);
     draw_range_circle(m, kind.stats([0; PATHS]).range, tint);
-    draw_tower(&Tower::new(0, kind, m), m, game.time, 0.6, false, t);
+    draw_tower(&Tower::new(0, kind, m), m, game.time, 0.6, buffed, t);
+    if buffed {
+        let label = "Buffed by support farm";
+        let w = measure_text(label, None, 16, 1.0).width;
+        let pos = vec2(
+            (m.x - w / 2.0).clamp(MAP_X + 4.0, MAP_X + MAP_W - w - 4.0),
+            m.y - TOWER_RADIUS - 16.0,
+        );
+        draw_rectangle(
+            pos.x - 4.0,
+            pos.y - 13.0,
+            w + 8.0,
+            18.0,
+            Color::new(0.1, 0.45, 0.2, 0.85),
+        );
+        draw_text(label, pos.x, pos.y, 16.0, WHITE);
+    }
     if !ok {
         draw_circle_lines(m.x, m.y, TOWER_RADIUS + 2.0, 3.0, RED);
     }
@@ -590,6 +993,93 @@ fn draw_placement_preview(game: &Game, t: &Theme) {
     let y = (m.y + TOWER_RADIUS + 22.0).min(MAP_Y + MAP_H - 6.0);
     draw_rectangle(x - 4.0, y - 13.0, w + 8.0, 18.0, with_alpha(BLACK, 0.55));
     draw_text(hint, x, y, 16.0, WHITE);
+}
+
+/// Small fixed details around a tower's base: ammo, sandbags, snow.
+fn draw_tower_trim(tower: &Tower, c: Vec2, time: f32, a: &dyn Fn(Color) -> Color) {
+    match tower.kind {
+        TowerKind::Arrow => {
+            // Quiver of spare arrows.
+            let q = c + vec2(12.0, 10.0);
+            draw_rectangle(
+                q.x - 3.0,
+                q.y - 5.0,
+                6.0,
+                10.0,
+                a(Color::new(0.45, 0.25, 0.12, 1.0)),
+            );
+            for k in 0..3 {
+                let x = q.x - 2.0 + k as f32 * 2.0;
+                draw_line(
+                    x,
+                    q.y - 5.0,
+                    x,
+                    q.y - 9.0,
+                    1.0,
+                    a(Color::new(0.9, 0.9, 0.85, 1.0)),
+                );
+            }
+        }
+        TowerKind::Cannon => {
+            // A little pile of cannonballs.
+            let q = c + vec2(-13.0, 11.0);
+            for (dx, dy) in [(-3.0, 1.5), (3.0, 1.5), (0.0, -2.5)] {
+                draw_circle(
+                    q.x + dx,
+                    q.y + dy,
+                    2.8,
+                    a(Color::new(0.15, 0.15, 0.17, 1.0)),
+                );
+                draw_circle(
+                    q.x + dx - 0.8,
+                    q.y + dy - 0.8,
+                    0.9,
+                    a(Color::new(0.5, 0.5, 0.55, 1.0)),
+                );
+            }
+        }
+        TowerKind::Frost => {
+            // Snowflakes drifting around the base.
+            for k in 0..4 {
+                let ang = -time * 0.5 + k as f32 * 1.57;
+                let q = c + vec2(ang.cos(), ang.sin()) * (TOWER_RADIUS + 3.0);
+                for d in 0..3 {
+                    let r = d as f32 * 1.05;
+                    let v = vec2(r.cos(), r.sin()) * 2.5;
+                    draw_line(q.x - v.x, q.y - v.y, q.x + v.x, q.y + v.y, 1.0, a(WHITE));
+                }
+            }
+        }
+        TowerKind::Sniper => {
+            // Sandbags on the back side.
+            for k in 0..3 {
+                let ang = 2.0 + k as f32 * 0.55;
+                let q = c + vec2(ang.cos(), ang.sin()) * (TOWER_RADIUS - 1.0);
+                draw_circle(q.x, q.y, 4.5, a(Color::new(0.72, 0.62, 0.42, 1.0)));
+                draw_circle_lines(q.x, q.y, 4.5, 1.0, a(Color::new(0.45, 0.38, 0.25, 1.0)));
+            }
+        }
+        TowerKind::Mercenary => {
+            // Ammo crate.
+            let q = c + vec2(12.0, 11.0);
+            draw_rectangle(
+                q.x - 5.0,
+                q.y - 4.0,
+                10.0,
+                8.0,
+                a(Color::new(0.30, 0.35, 0.20, 1.0)),
+            );
+            draw_line(
+                q.x - 5.0,
+                q.y,
+                q.x + 5.0,
+                q.y,
+                1.0,
+                a(Color::new(0.85, 0.75, 0.3, 1.0)),
+            );
+        }
+        TowerKind::Farm => {}
+    }
 }
 
 /// Ring color showing a tower's highest upgrade tier.
@@ -632,7 +1122,7 @@ fn draw_tower(tower: &Tower, c: Vec2, time: f32, alpha: f32, buffed: bool, t: &T
 
     match tower.kind {
         TowerKind::Farm => draw_farm(tower, c, time, alpha),
-        TowerKind::MinuteMan => draw_minuteman(tower, c, alpha),
+        TowerKind::Mercenary => draw_mercenary(tower, c, alpha),
         TowerKind::Arrow => {
             // Wooden platform with a crossbow on top.
             draw_poly(
@@ -816,6 +1306,8 @@ fn draw_tower(tower: &Tower, c: Vec2, time: f32, alpha: f32, buffed: bool, t: &T
         }
     }
 
+    draw_tower_trim(tower, c, time, &a);
+
     let top = tower.tiers.iter().copied().max().unwrap_or(0);
     if let Some(ring) = tier_color(top, time) {
         draw_circle_lines(c.x, c.y, TOWER_RADIUS + 2.0, 2.5, with_alpha(ring, alpha));
@@ -849,7 +1341,7 @@ fn draw_tower(tower: &Tower, c: Vec2, time: f32, alpha: f32, buffed: bool, t: &T
 
 /// A colonial rifleman seen from above. His gun changes with the upgrade
 /// path he's furthest along: musket/rifle, dual pistols or a light MG.
-fn draw_minuteman(tower: &Tower, c: Vec2, alpha: f32) {
+fn draw_mercenary(tower: &Tower, c: Vec2, alpha: f32) {
     let a = |col: Color| with_alpha(col, col.a * alpha);
     let dir = vec2(tower.angle.cos(), tower.angle.sin());
     let side = vec2(-dir.y, dir.x);
@@ -947,16 +1439,38 @@ fn draw_minuteman(tower: &Tower, c: Vec2, alpha: f32) {
         draw_circle(grip.x, grip.y, 2.2, a(skin));
     }
 
-    // Head with a tricorn hat.
+    // Tactical vest straps.
+    for s in [-1.0, 1.0] {
+        let p0 = back + side * s * 4.0 - dir * 5.0;
+        let p1 = back + side * s * 4.0 + dir * 5.0;
+        line(p0, p1, 1.5, Color::new(0.15, 0.15, 0.12, 1.0));
+    }
+    // Head with a combat helmet and goggles.
     let head = c - dir * 1.0;
     draw_circle(head.x, head.y, 5.5, a(skin));
-    draw_triangle(
-        head + dir * 6.5,
-        head - dir * 4.0 + side * 7.0,
-        head - dir * 4.0 - side * 7.0,
-        a(Color::new(0.12, 0.10, 0.10, 1.0)),
+    draw_circle(
+        head.x - dir.x,
+        head.y - dir.y,
+        6.0,
+        a(Color::new(0.30, 0.34, 0.20, 1.0)),
     );
-    draw_circle(head.x, head.y, 2.5, a(Color::new(0.22, 0.18, 0.16, 1.0)));
+    draw_circle(
+        head.x - dir.x * 2.0,
+        head.y - dir.y * 2.0,
+        3.0,
+        a(Color::new(0.38, 0.42, 0.26, 1.0)),
+    );
+    let g = head + dir * 4.0;
+    line(
+        g - side * 4.5,
+        g + side * 4.5,
+        2.5,
+        Color::new(0.1, 0.1, 0.1, 1.0),
+    );
+    for s in [-2.2, 2.2] {
+        let lens = g + side * s;
+        draw_circle(lens.x, lens.y, 1.4, a(Color::new(0.4, 0.8, 1.0, 1.0)));
+    }
 
     if tower.since_shot < 0.05 {
         for m in muzzles {
@@ -1037,9 +1551,28 @@ fn draw_farm(tower: &Tower, c: Vec2, time: f32, alpha: f32) {
 
 // ---------------------------------------------------------------- units
 
+/// Filled rectangle rotated to face `dir`.
+fn quad(center: Vec2, dir: Vec2, half_len: f32, half_w: f32, color: Color) {
+    let side = vec2(-dir.y, dir.x);
+    let a = center + dir * half_len + side * half_w;
+    let b = center + dir * half_len - side * half_w;
+    let c = center - dir * half_len - side * half_w;
+    let d = center - dir * half_len + side * half_w;
+    draw_triangle(a, b, c, color);
+    draw_triangle(a, c, d, color);
+}
+
 fn draw_enemies(game: &Game) {
+    let wps = &game.map.waypoints;
     for e in &game.enemies {
         let r = e.kind.radius();
+        let target = wps[e.next_waypoint.min(wps.len() - 1)];
+        let dir = (target - e.pos).try_normalize().unwrap_or(vec2(1.0, 0.0));
+        let side = vec2(-dir.y, dir.x);
+        let moving = !(e.frozen() || e.stunned());
+        let phase = game.time * (6.0 + e.kind.speed() / 15.0) + e.id as f32;
+        let step = if moving { phase.sin() } else { 0.0 };
+
         let mut color = e.kind.color();
         if e.slowed() {
             color = Color::new(color.r * 0.5 + 0.2, color.g * 0.6 + 0.3, 1.0, 1.0);
@@ -1047,79 +1580,187 @@ fn draw_enemies(game: &Game) {
         if e.stunned() {
             color = Color::new(0.85, 0.85, 0.85, 1.0);
         }
-        if e.since_hit < 0.06 {
-            color = WHITE;
-        }
-        draw_circle(e.pos.x + 2.0, e.pos.y + 3.0, r, with_alpha(BLACK, 0.25));
+        let flash = e.since_hit < 0.06;
+        let body = if flash { WHITE } else { color };
+        let p = e.pos;
+        draw_circle(p.x + 2.0, p.y + 3.0, r, with_alpha(BLACK, 0.25));
+
         match e.kind {
-            EnemyKind::Tank => {
-                draw_rectangle(e.pos.x - r, e.pos.y - r, r * 2.0, r * 2.0, color);
-                draw_rectangle_lines(e.pos.x - r, e.pos.y - r, r * 2.0, r * 2.0, 2.0, BLACK);
-                draw_rectangle(
-                    e.pos.x - r * 0.5,
-                    e.pos.y - r * 0.5,
-                    r,
-                    r,
-                    darken(color, 0.8),
+            EnemyKind::Grunt => {
+                // Little goblin: stomping feet, horns and big eyes.
+                for s in [-1.0, 1.0] {
+                    let foot = p + side * s * 5.5 + dir * (step * s * 3.5);
+                    draw_circle(foot.x, foot.y, 3.5, darken(color, 0.55));
+                }
+                draw_circle(p.x, p.y, r, body);
+                draw_circle(
+                    p.x - dir.x * 2.0,
+                    p.y - dir.y * 2.0,
+                    r * 0.6,
+                    darken(body, 1.1),
                 );
+                draw_circle_lines(p.x, p.y, r, 2.0, with_alpha(BLACK, 0.6));
+                for s in [-1.0, 1.0] {
+                    let base = p + side * s * r * 0.6 - dir * 2.0;
+                    draw_triangle(
+                        base + dir * 2.5,
+                        base - dir * 2.5,
+                        base + side * s * 6.0 - dir * 3.0,
+                        Color::new(0.95, 0.9, 0.75, 1.0),
+                    );
+                    let eye = p + dir * r * 0.45 + side * s * 3.6;
+                    draw_circle(eye.x, eye.y, 2.8, WHITE);
+                    draw_circle(eye.x + dir.x, eye.y + dir.y, 1.5, BLACK);
+                }
             }
             EnemyKind::Runner => {
-                draw_poly(e.pos.x, e.pos.y, 3, r + 2.0, game.time * 360.0, color);
+                // Arrowhead with speed streaks.
+                for k in [-1.0, 0.0, 1.0] {
+                    let from = p - dir * (r + 3.0) + side * k * 4.0;
+                    let len = 6.0 + (phase * 2.0 + k).sin().abs() * 6.0;
+                    let to = from - dir * len;
+                    draw_line(from.x, from.y, to.x, to.y, 1.5, with_alpha(color, 0.6));
+                }
+                let tip = p + dir * (r + 5.0);
+                let l = p - dir * r + side * (r + 1.0);
+                let rr = p - dir * r - side * (r + 1.0);
+                draw_triangle(tip, l, rr, body);
+                draw_triangle(p + dir * 2.0, l, rr, darken(body, 0.85));
+                draw_line(tip.x, tip.y, l.x, l.y, 1.5, with_alpha(BLACK, 0.6));
+                draw_line(tip.x, tip.y, rr.x, rr.y, 1.5, with_alpha(BLACK, 0.6));
+                let eye = p + dir * 3.0;
+                draw_circle(eye.x, eye.y, 2.5, WHITE);
+                draw_circle(eye.x + dir.x, eye.y + dir.y, 1.3, BLACK);
+            }
+            EnemyKind::Tank => {
+                // Armored hull on treads with a turret.
+                let tread = Color::new(0.18, 0.18, 0.2, 1.0);
+                for s in [-1.0, 1.0] {
+                    let c = p + side * s * (r - 1.0);
+                    quad(c, dir, r + 2.0, 4.0, tread);
+                    let roll = (game.time * e.speed() * 0.3) % 6.0;
+                    let mut d = -r + roll;
+                    while d < r {
+                        let m = c + dir * d;
+                        draw_line(
+                            m.x - side.x * 4.0,
+                            m.y - side.y * 4.0,
+                            m.x + side.x * 4.0,
+                            m.y + side.y * 4.0,
+                            1.0,
+                            GRAY,
+                        );
+                        d += 6.0;
+                    }
+                }
+                quad(p, dir, r - 1.0, r - 4.0, body);
+                quad(p, dir, r - 3.0, r - 7.0, darken(body, 0.88));
+                let barrel = p + dir * (r + 7.0);
+                draw_line(p.x, p.y, barrel.x, barrel.y, 4.0, darken(body, 0.6));
+                draw_circle(p.x, p.y, r * 0.5, darken(body, 0.75));
+                draw_circle_lines(p.x, p.y, r * 0.5, 1.5, with_alpha(BLACK, 0.6));
+                for (a, b) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
+                    let q = p + dir * a * (r - 5.0) + side * b * (r - 8.0);
+                    draw_circle(q.x, q.y, 1.3, LIGHTGRAY);
+                }
             }
             EnemyKind::Boss => {
-                draw_poly(e.pos.x, e.pos.y, 8, r, game.time * 30.0, color);
-                draw_poly_lines(e.pos.x, e.pos.y, 8, r, game.time * 30.0, 3.0, BLACK);
-                draw_circle(e.pos.x - 6.0, e.pos.y - 4.0, 3.0, YELLOW);
-                draw_circle(e.pos.x + 6.0, e.pos.y - 4.0, 3.0, YELLOW);
-            }
-            EnemyKind::Grunt => {
-                draw_circle(e.pos.x, e.pos.y, r, color);
-                draw_circle_lines(e.pos.x, e.pos.y, r, 2.0, with_alpha(BLACK, 0.6));
-                draw_circle(e.pos.x - 3.5, e.pos.y - 2.0, 1.8, BLACK);
-                draw_circle(e.pos.x + 3.5, e.pos.y - 2.0, 1.8, BLACK);
+                // Spiked brute with a crown and glowing eyes.
+                let spin = game.time * 0.6;
+                for k in 0..10 {
+                    let a = spin + k as f32 / 10.0 * std::f32::consts::TAU;
+                    let out = vec2(a.cos(), a.sin());
+                    let tan = vec2(-out.y, out.x);
+                    draw_triangle(
+                        p + out * (r - 2.0) + tan * 4.0,
+                        p + out * (r - 2.0) - tan * 4.0,
+                        p + out * (r + 7.0),
+                        darken(body, 0.6),
+                    );
+                }
+                draw_circle(p.x, p.y, r, body);
+                draw_circle_lines(p.x, p.y, r, 3.0, BLACK);
+                draw_circle(
+                    p.x - dir.x * 3.0,
+                    p.y - dir.y * 3.0,
+                    r * 0.65,
+                    darken(body, 0.85),
+                );
+                let crown = p - dir * 5.0;
+                let gold = Color::new(1.0, 0.8, 0.2, 1.0);
+                for k in 0..5 {
+                    let a = k as f32 / 5.0 * std::f32::consts::TAU + game.time * 0.3;
+                    let out = vec2(a.cos(), a.sin());
+                    draw_triangle(
+                        crown + out * 5.0 + vec2(-out.y, out.x) * 3.0,
+                        crown + out * 5.0 - vec2(-out.y, out.x) * 3.0,
+                        crown + out * 10.0,
+                        gold,
+                    );
+                }
+                draw_circle(crown.x, crown.y, 6.0, gold);
+                draw_circle(crown.x, crown.y, 2.5, Color::new(0.3, 0.6, 1.0, 1.0));
+                let glow = 0.7 + 0.3 * (game.time * 6.0).sin();
+                for s in [-1.0, 1.0] {
+                    let eye = p + dir * r * 0.5 + side * s * 7.0;
+                    draw_circle(eye.x, eye.y, 5.0, Color::new(1.0, 0.9, 0.2, 0.3 * glow));
+                    draw_circle(eye.x, eye.y, 3.0, Color::new(1.0, 0.95, 0.4, glow));
+                }
             }
         }
         if e.frozen() {
             let s = r + 4.0;
             draw_rectangle(
-                e.pos.x - s,
-                e.pos.y - s,
+                p.x - s,
+                p.y - s,
                 s * 2.0,
                 s * 2.0,
                 Color::new(0.7, 0.9, 1.0, 0.55),
             );
             draw_rectangle_lines(
-                e.pos.x - s,
-                e.pos.y - s,
+                p.x - s,
+                p.y - s,
                 s * 2.0,
                 s * 2.0,
                 2.0,
                 Color::new(0.9, 0.97, 1.0, 0.9),
             );
-        } else if e.freeze_immune() {
-            // Thawing out: can't be refrozen yet.
-            draw_circle_lines(
-                e.pos.x,
-                e.pos.y,
-                r + 4.0,
+            draw_line(
+                p.x - s + 3.0,
+                p.y - s + 6.0,
+                p.x - s + 8.0,
+                p.y - s + 3.0,
                 1.5,
-                Color::new(0.7, 0.9, 1.0, 0.6),
+                WHITE,
             );
+        } else if e.freeze_immune() {
+            draw_circle_lines(p.x, p.y, r + 4.0, 1.5, Color::new(0.7, 0.9, 1.0, 0.6));
+        }
+        if e.stunned() {
+            for k in 0..3 {
+                let a = game.time * 5.0 + k as f32 * 2.1;
+                let q = p - dir * 2.0 + vec2(a.cos(), a.sin() * 0.5) * (r * 0.8);
+                draw_poly(q.x, q.y, 4, 2.5, a.to_degrees(), YELLOW);
+            }
         }
         if e.burning() {
-            let flicker = (game.time * 20.0 + e.id as f32).sin() * 2.0;
-            draw_circle(
-                e.pos.x,
-                e.pos.y - r - 2.0 + flicker,
-                4.0,
-                with_alpha(ORANGE, 0.9),
-            );
+            for k in 0..2 {
+                let flicker = (game.time * 20.0 + e.id as f32 + k as f32 * 3.0).sin() * 2.0;
+                let q = p + side * (k as f32 * 2.0 - 1.0) * r * 0.5;
+                draw_triangle(
+                    vec2(q.x - 3.0, q.y - r * 0.4),
+                    vec2(q.x + 3.0, q.y - r * 0.4),
+                    vec2(q.x + flicker * 0.5, q.y - r - 6.0 + flicker),
+                    with_alpha(ORANGE, 0.9),
+                );
+            }
         }
 
-        if e.hp < e.max_hp {
-            let w = r * 2.4;
-            let x = e.pos.x - w / 2.0;
-            let y = e.pos.y - r - 9.0;
+        if e.hp < e.max_hp || e.kind == EnemyKind::Boss {
+            let boss = e.kind == EnemyKind::Boss;
+            let w = if boss { 54.0 } else { r * 2.4 };
+            let x = p.x - w / 2.0;
+            let y = p.y - r - if boss { 16.0 } else { 9.0 };
             let frac = (e.hp / e.max_hp).clamp(0.0, 1.0);
             let bar = if frac > 0.5 {
                 GREEN
@@ -1128,8 +1769,17 @@ fn draw_enemies(game: &Game) {
             } else {
                 RED
             };
-            draw_rectangle(x - 1.0, y - 1.0, w + 2.0, 6.0, BLACK);
-            draw_rectangle(x, y, w * frac, 4.0, bar);
+            let h = if boss { 6.0 } else { 4.0 };
+            draw_rectangle(x - 1.0, y - 1.0, w + 2.0, h + 2.0, BLACK);
+            draw_rectangle(x, y, w * frac, h, bar);
+            if boss {
+                text_centered(
+                    "BOSS",
+                    vec2(p.x, y - 8.0),
+                    14,
+                    Color::new(1.0, 0.85, 0.3, 1.0),
+                );
+            }
         }
     }
 }
@@ -1191,6 +1841,78 @@ fn draw_effects(game: &Game) {
 
 // ---------------------------------------------------------------- HUD
 
+/// Short numbers for the damage meter: 950, 12.3k, 4.5M.
+fn fmt_num(v: f32) -> String {
+    if v >= 1_000_000.0 {
+        format!("{:.1}M", v / 1_000_000.0)
+    } else if v >= 1_000.0 {
+        format!("{:.1}k", v / 1_000.0)
+    } else {
+        format!("{v:.0}")
+    }
+}
+
+fn draw_damage_meter(game: &Game, t: &Theme) {
+    let r = ui::damage_meter();
+    panel_rect(r, with_alpha(t.panel, 0.94), t.border);
+    draw_text("Damage meter", r.x + 12.0, r.y + 26.0, 24.0, t.text);
+    text_right("D to close", r.x + r.w - 12.0, r.y + 24.0, 16, t.text_dim);
+    draw_text("Tower", r.x + 12.0, r.y + 48.0, 15.0, t.text_dim);
+    draw_text("Owned", r.x + 118.0, r.y + 48.0, 15.0, t.text_dim);
+    text_right("Damage", r.x + r.w - 12.0, r.y + 48.0, 15, t.text_dim);
+
+    let totals = game.damage_by_kind();
+    let total: f32 = totals.iter().sum();
+    let best = totals.iter().cloned().fold(0.0, f32::max).max(1.0);
+    for (i, kind) in TowerKind::ALL.into_iter().enumerate() {
+        let y = r.y + 58.0 + i as f32 * 30.0;
+        let count = game.towers.iter().filter(|t| t.kind == kind).count();
+        let dmg = totals[i];
+        let row = Rect::new(r.x + 8.0, y, r.w - 16.0, 26.0);
+        if i % 2 == 0 {
+            rounded(row, 4.0, with_alpha(t.text, 0.05));
+        }
+        draw_circle(row.x + 14.0, row.y + 13.0, 8.0, kind.color());
+        draw_circle_lines(row.x + 14.0, row.y + 13.0, 8.0, 1.5, BLACK);
+        draw_text(kind.name(), row.x + 28.0, row.y + 18.0, 17.0, t.text);
+        draw_text(
+            format!("x{count}"),
+            row.x + 112.0,
+            row.y + 18.0,
+            17.0,
+            t.text_dim,
+        );
+        // Bar shows each type's share of the damage.
+        let bar = Rect::new(row.x + 148.0, row.y + 8.0, 70.0, 10.0);
+        draw_rectangle(bar.x, bar.y, bar.w, bar.h, with_alpha(t.text, 0.12));
+        draw_rectangle(bar.x, bar.y, bar.w * dmg / best, bar.h, kind.color());
+        text_right(&fmt_num(dmg), row.x + row.w - 4.0, row.y + 18.0, 17, t.text);
+    }
+    let y = r.y + r.h - 12.0;
+    draw_line(
+        r.x + 10.0,
+        y - 20.0,
+        r.x + r.w - 10.0,
+        y - 20.0,
+        1.0,
+        t.border,
+    );
+    draw_text(
+        format!("{} towers", game.towers.len()),
+        r.x + 12.0,
+        y,
+        18.0,
+        t.text_dim,
+    );
+    text_right(
+        &format!("Total {}", fmt_num(total)),
+        r.x + r.w - 12.0,
+        y,
+        18,
+        t.text,
+    );
+}
+
 fn draw_party_badge(game: &Game) {
     let Some(text) = &game.party else {
         return;
@@ -1240,13 +1962,17 @@ fn draw_top_bar(game: &Game, t: &Theme) {
         text_centered("SANDBOX", r.center(), 20, BLACK);
     }
 
+    let diff = game.map.difficulty();
+    let label = format!("{} ({})", game.map.name, diff.label());
     text_right(
-        &format!("Map: {}", game.map.name),
-        ui::settings_button().x - 16.0,
+        &label,
+        ui::stats_button().x - 14.0,
         30.0,
         20,
-        t.text_dim,
+        darken(diff.color(), if t.night { 1.2 } else { 0.85 }),
     );
+    let stats_color = if game.show_stats { GREEN_BTN } else { BLUE };
+    button(ui::stats_button(), "Stats (D)", true, stats_color, t);
     button(ui::settings_button(), "Settings", true, BLUE, t);
     let pause_label = if game.paused { "Resume" } else { "Pause" };
     button(ui::pause_button(), pause_label, true, BLUE, t);
@@ -1437,7 +2163,7 @@ fn stat_lines(kind: TowerKind, s: &Stats) -> Vec<String> {
             s.arrows,
             s.pierce / TILE
         )),
-        TowerKind::MinuteMan => {
+        TowerKind::Mercenary => {
             let mut extra = Vec::new();
             if s.targets > 1 {
                 extra.push(format!("{} targets", s.targets));
@@ -1606,7 +2332,16 @@ fn draw_tower_panel(game: &Game, index: usize, t: &Theme) {
         t,
     );
 
-    let mut y = ui::sell_button().y + ui::sell_button().h + 22.0;
+    let mut y = ui::sell_button().y + ui::sell_button().h + 24.0;
+    draw_text("Damage dealt", x, y, 19.0, t.text);
+    text_right(
+        &fmt_num(tower.damage_dealt),
+        SIDEBAR_X + SIDEBAR_W - 14.0,
+        y,
+        19,
+        t.gold,
+    );
+    y += 24.0;
     for line in [
         "Only 2 paths per tower, and",
         "only one can go past tier 2.",
@@ -1740,6 +2475,7 @@ fn draw_settings(game: &Game, in_game: bool, t: &Theme) {
             }
         };
         button(r, label, true, color, t);
+        draw_settings_icon(*item, game.night, vec2(r.x + 24.0, r.center().y));
     }
     if game.online {
         text_centered(
@@ -1751,19 +2487,115 @@ fn draw_settings(game: &Game, in_game: bool, t: &Theme) {
     }
 }
 
+/// Small white icons on the left of each settings button.
+fn draw_settings_icon(item: SettingsItem, night: bool, c: Vec2) {
+    let w = WHITE;
+    match item {
+        SettingsItem::Theme if night => {
+            draw_circle(c.x, c.y, 8.0, w);
+            draw_circle(c.x + 4.0, c.y - 3.0, 7.0, BLUE);
+        }
+        SettingsItem::Theme => {
+            draw_circle(c.x, c.y, 5.0, w);
+            for k in 0..8 {
+                let a = k as f32 / 8.0 * std::f32::consts::TAU;
+                let d = vec2(a.cos(), a.sin());
+                draw_line(
+                    c.x + d.x * 7.0,
+                    c.y + d.y * 7.0,
+                    c.x + d.x * 10.0,
+                    c.y + d.y * 10.0,
+                    2.0,
+                    w,
+                );
+            }
+        }
+        SettingsItem::Guide => {
+            draw_rectangle_lines(c.x - 8.0, c.y - 9.0, 16.0, 18.0, 2.0, w);
+            draw_line(c.x, c.y - 9.0, c.x, c.y + 9.0, 2.0, w);
+            draw_line(c.x - 5.0, c.y - 4.0, c.x - 2.0, c.y - 4.0, 1.5, w);
+            draw_line(c.x + 2.0, c.y - 4.0, c.x + 5.0, c.y - 4.0, 1.5, w);
+        }
+        SettingsItem::Restart => {
+            for k in 0..9 {
+                let a0 = (40.0 + k as f32 * 30.0_f32).to_radians();
+                let a1 = (40.0 + (k + 1) as f32 * 30.0_f32).to_radians();
+                draw_line(
+                    c.x + a0.cos() * 8.0,
+                    c.y + a0.sin() * 8.0,
+                    c.x + a1.cos() * 8.0,
+                    c.y + a1.sin() * 8.0,
+                    2.5,
+                    w,
+                );
+            }
+            draw_triangle(
+                c + vec2(4.0, -10.0),
+                c + vec2(10.0, -2.0),
+                c + vec2(1.0, -1.0),
+                w,
+            );
+        }
+        SettingsItem::MainMenu => {
+            draw_triangle(
+                c + vec2(-10.0, 0.0),
+                c + vec2(10.0, 0.0),
+                c + vec2(0.0, -10.0),
+                w,
+            );
+            draw_rectangle(c.x - 7.0, c.y, 14.0, 9.0, w);
+        }
+        SettingsItem::Close => {
+            draw_triangle(
+                c + vec2(-6.0, -8.0),
+                c + vec2(-6.0, 8.0),
+                c + vec2(8.0, 0.0),
+                w,
+            );
+        }
+        SettingsItem::TowerVolume | SettingsItem::GameVolume => {}
+    }
+}
+
+/// Speaker icon for the volume sliders.
+fn draw_speaker(c: Vec2, color: Color) {
+    draw_rectangle(c.x - 8.0, c.y - 4.0, 5.0, 8.0, color);
+    draw_triangle(
+        c + vec2(-3.0, -4.0),
+        c + vec2(-3.0, 4.0),
+        c + vec2(4.0, -9.0),
+        color,
+    );
+    draw_triangle(
+        c + vec2(-3.0, 4.0),
+        c + vec2(4.0, 9.0),
+        c + vec2(4.0, -9.0),
+        color,
+    );
+    draw_line(c.x + 7.0, c.y - 4.0, c.x + 7.0, c.y + 4.0, 1.5, color);
+}
+
 fn draw_slider(row: Rect, label: &str, value: f32, t: &Theme) {
     panel_rect(row, t.panel_light, t.border);
+    draw_speaker(vec2(row.x + 22.0, row.center().y), t.text);
     draw_text(
-        format!("{label}  {:.0}%", value * 100.0),
-        row.x + 12.0,
+        format!("{label} {:.0}%", value * 100.0),
+        row.x + 40.0,
         row.y + 28.0,
-        20.0,
+        18.0,
         t.text,
     );
     let track = ui::slider_track(row);
-    draw_rectangle(track.x, track.y, track.w, track.h, with_alpha(t.text, 0.2));
-    draw_rectangle(track.x, track.y, track.w * value, track.h, BLUE);
+    rounded(track, 5.0, with_alpha(t.text, 0.2));
+    if value > 0.01 {
+        rounded(
+            Rect::new(track.x, track.y, track.w * value, track.h),
+            5.0,
+            BLUE,
+        );
+    }
     let knob = vec2(track.x + track.w * value, track.y + track.h / 2.0);
+    draw_circle(knob.x + 1.0, knob.y + 2.0, 10.0, with_alpha(BLACK, 0.25));
     draw_circle(knob.x, knob.y, 10.0, WHITE);
     draw_circle_lines(knob.x, knob.y, 10.0, 2.0, BLUE);
 }
@@ -1859,72 +2691,219 @@ fn sample_tower(tower: &Tower) {
     draw_tower(tower, tower.pos, get_time() as f32, 1.0, false, &DAY);
 }
 
+/// A small picture of a map's route, for the map cards.
+fn draw_map_preview(map: &Map, area: Rect, t: &Theme) {
+    let bg = match map.theme() {
+        MapTheme::Meadow => {
+            if t.night {
+                NIGHT.grass
+            } else {
+                DAY.grass
+            }
+        }
+        MapTheme::Castle => {
+            if t.night {
+                NIGHT.floor_a
+            } else {
+                DAY.floor_a
+            }
+        }
+        MapTheme::Moon => Color::new(0.55, 0.55, 0.58, 1.0),
+    };
+    let track = match map.theme() {
+        MapTheme::Meadow => DAY.path_fill,
+        MapTheme::Castle => RUG,
+        MapTheme::Moon => Color::new(0.38, 0.38, 0.42, 1.0),
+    };
+    rounded(area, 5.0, bg);
+    let to_area = |p: Vec2| {
+        let x = ((p.x - MAP_X) / MAP_W).clamp(0.0, 1.0);
+        let y = ((p.y - MAP_Y) / MAP_H).clamp(0.0, 1.0);
+        vec2(
+            area.x + 4.0 + x * (area.w - 8.0),
+            area.y + 4.0 + y * (area.h - 8.0),
+        )
+    };
+    for w in map.waypoints.windows(2) {
+        let (a, b) = (to_area(w[0]), to_area(w[1]));
+        draw_line(a.x, a.y, b.x, b.y, 5.0, track);
+    }
+    for w in &map.waypoints {
+        let q = to_area(*w);
+        draw_rectangle(q.x - 2.5, q.y - 2.5, 5.0, 5.0, track);
+    }
+    let start = to_area(map.portal);
+    let end = to_area(map.base);
+    draw_circle(start.x, start.y, 4.0, PURPLE);
+    draw_circle(end.x, end.y, 4.5, RED);
+}
+
+/// Colored difficulty pill with 1 to 3 skulls' worth of pips.
+fn draw_difficulty_badge(diff: crate::map::Difficulty, x: f32, y: f32) -> f32 {
+    let label = diff.label();
+    let w = measure_text(label, None, 16, 1.0).width + 46.0;
+    let r = Rect::new(x, y, w, 22.0);
+    rounded(r, 11.0, diff.color());
+    draw_text(label, r.x + 10.0, r.y + 16.0, 16.0, WHITE);
+    for k in 0..3 {
+        let c = vec2(r.x + r.w - 26.0 + k as f32 * 8.0, r.center().y);
+        let filled = k < diff.level();
+        draw_circle(
+            c.x,
+            c.y,
+            3.0,
+            if filled {
+                WHITE
+            } else {
+                with_alpha(WHITE, 0.3)
+            },
+        );
+    }
+    w
+}
+
+fn section_header(text: &str, x: f32, y: f32, width: f32, t: &Theme) {
+    draw_text(text, x, y, 22.0, t.text);
+    let w = measure_text(text, None, 22, 1.0).width;
+    draw_line(x + w + 12.0, y - 7.0, x + width, y - 7.0, 1.0, t.border);
+}
+
 pub fn draw_lobby(lobby: &Lobby, game: &Game) {
     let t = theme(game);
     let time = get_time() as f32;
     clear_background(t.panel);
     draw_map(&lobby.preview, time, 10.0, t);
-    draw_rectangle(0.0, 0.0, SCREEN_W, SCREEN_H, with_alpha(BLACK, 0.45));
+    draw_rectangle(0.0, 0.0, SCREEN_W, SCREEN_H, with_alpha(BLACK, 0.5));
 
+    // Title with a little wobble and a sword-like underline.
     let title = "RUSTY TOWER DEFENSE";
+    let ty = 62.0 + (time * 1.5).sin() * 2.0;
     text_centered(
         title,
-        vec2(SCREEN_W / 2.0 + 3.0, 73.0),
-        64,
+        vec2(SCREEN_W / 2.0 + 4.0, ty + 4.0),
+        66,
         with_alpha(BLACK, 0.6),
     );
     text_centered(
         title,
-        vec2(SCREEN_W / 2.0, 70.0),
-        64,
+        vec2(SCREEN_W / 2.0, ty),
+        66,
         Color::new(1.0, 0.85, 0.3, 1.0),
     );
+    let tw = measure_text(title, None, 66, 1.0).width;
+    draw_line(
+        SCREEN_W / 2.0 - tw / 2.0,
+        ty + 30.0,
+        SCREEN_W / 2.0 + tw / 2.0,
+        ty + 30.0,
+        3.0,
+        Color::new(1.0, 0.85, 0.3, 0.8),
+    );
     text_centered(
-        &crate::version_label(),
-        vec2(SCREEN_W / 2.0, 112.0),
-        22,
+        &format!(
+            "{}  -  defend the castle, the throne and the moon",
+            crate::version_label()
+        ),
+        vec2(SCREEN_W / 2.0, ty + 48.0),
+        18,
         WHITE,
     );
 
     let p = ui::lobby_panel();
-    panel_rect(p, t.panel, t.border);
+    panel_rect(p, with_alpha(t.panel, 0.96), t.border);
 
-    draw_text("Map", p.x + 20.0, p.y + 30.0, 22.0, t.text);
+    section_header("Choose a map", p.x + 20.0, p.y + 34.0, p.w - 40.0, t);
     for i in 0..MAP_COUNT {
         let r = ui::lobby_map_card(i);
         let map = Map::new(i);
         let chosen = lobby.map == i;
+        let hover = r.contains(mouse());
         let fill = if chosen {
             Color::new(0.45, 0.60, 0.85, 1.0)
-        } else if r.contains(mouse()) {
+        } else if hover {
             t.panel_hover
         } else {
             t.panel_light
         };
-        panel_rect(r, fill, if chosen { t.text } else { t.border });
+        panel_rect(r, fill, if chosen { WHITE } else { t.border });
+        if chosen {
+            rounded_lines(
+                Rect::new(r.x - 3.0, r.y - 3.0, r.w + 6.0, r.h + 6.0),
+                9.0,
+                2.0,
+                map.difficulty().color(),
+            );
+        }
+        draw_map_preview(&map, Rect::new(r.x + 10.0, r.y + 10.0, r.w - 20.0, 92.0), t);
         let c = if chosen { WHITE } else { t.text };
-        draw_text(map.name, r.x + 12.0, r.y + 30.0, 28.0, c);
+        draw_text(map.name, r.x + 12.0, r.y + 128.0, 26.0, c);
+        let nw = measure_text(map.name, None, 26, 1.0).width;
+        draw_difficulty_badge(map.difficulty(), r.x + 20.0 + nw, r.y + 112.0);
         let d = if chosen { WHITE } else { t.text_dim };
-        draw_text(map.description, r.x + 12.0, r.y + 56.0, 16.0, d);
+        draw_text(map.description, r.x + 12.0, r.y + 150.0, 16.0, d);
+        let tiles = map.path_length() / TILE;
+        draw_text(
+            format!("Path length: {tiles:.0} tiles"),
+            r.x + 12.0,
+            r.y + 166.0,
+            14.0,
+            d,
+        );
     }
 
-    draw_text("Mode", p.x + 20.0, p.y + 142.0, 22.0, t.text);
+    section_header("Mode", p.x + 20.0, p.y + 254.0, p.w - 40.0, t);
     for sandbox in [false, true] {
         let r = ui::lobby_mode_button(sandbox);
         let chosen = lobby.sandbox == sandbox;
-        let color = if chosen { BLUE } else { GREY_BTN };
-        let label = if sandbox { "Sandbox" } else { "Normal" };
+        let (label, color) = if sandbox {
+            ("Sandbox", ORANGE_BTN)
+        } else {
+            ("Normal", BLUE)
+        };
         panel_rect(r, if chosen { color } else { t.panel_light }, t.border);
         text_centered(label, r.center(), 22, if chosen { WHITE } else { t.text });
     }
+    let mode_help = if lobby.sandbox {
+        "Everything free, endless waves,\nspawn any enemy. For testing."
+    } else {
+        "30 waves, 300 gold, 100 lives.\nSurvive them all to win."
+    };
+    for (k, line) in mode_help.lines().enumerate() {
+        draw_text(
+            line,
+            p.x + 550.0,
+            p.y + 282.0 + k as f32 * 18.0,
+            16.0,
+            t.text_dim,
+        );
+    }
 
-    button(ui::lobby_play(), "Play", !lobby.busy, GREEN_BTN, t);
+    let map = Map::new(lobby.map);
+    let play = format!(
+        "Play {}  -  {}",
+        map.name,
+        if lobby.sandbox { "Sandbox" } else { "Normal" }
+    );
+    button(ui::lobby_play(), &play, !lobby.busy, GREEN_BTN, t);
+    let pr = ui::lobby_play();
+    draw_triangle(
+        vec2(pr.x + 24.0, pr.center().y - 10.0),
+        vec2(pr.x + 24.0, pr.center().y + 10.0),
+        vec2(pr.x + 40.0, pr.center().y),
+        WHITE,
+    );
 
-    draw_text("Multiplayer (co-op)", p.x + 20.0, p.y + 296.0, 22.0, t.text);
+    section_header(
+        "Multiplayer (co-op, up to 4)",
+        p.x + 20.0,
+        p.y + 416.0,
+        p.w - 40.0,
+        t,
+    );
     button(ui::lobby_host(), "Host party", !lobby.busy, BLUE, t);
     let field = ui::lobby_address();
-    let fill = if lobby.typing { WHITE } else { t.panel_light };
-    panel_rect(field, fill, if lobby.typing { BLUE } else { t.border });
+    rounded(field, 6.0, if lobby.typing { WHITE } else { t.panel_light });
+    rounded_lines(field, 6.0, 2.0, if lobby.typing { BLUE } else { t.border });
     let shown = if lobby.address.is_empty() && !lobby.typing {
         "Host address".to_string()
     } else {
@@ -1951,8 +2930,8 @@ pub fn draw_lobby(lobby: &Lobby, game: &Game) {
     let status = lobby
         .status
         .as_deref()
-        .unwrap_or("Enter starts a game. Friends join with your IP.");
-    text_centered(status, vec2(p.center().x, p.y + p.h - 26.0), 18, t.text_dim);
+        .unwrap_or("Enter starts a game. Friends join with your IP address.");
+    text_centered(status, vec2(p.center().x, p.y + p.h - 14.0), 18, t.text_dim);
 
     draw_menus(game, false, t);
 }

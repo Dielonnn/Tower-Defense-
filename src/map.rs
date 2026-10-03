@@ -37,22 +37,38 @@ const SKETCH: [(f32, f32); 13] = [
     (464.0, 478.0),
 ];
 
-/// The castle map's rug, in 48px grid cells. Longer than the original
-/// zigzag, with every parallel stretch far enough apart for towers.
+/// The castle map's rug, in 48px grid cells. Lanes sit close together so
+/// towers between them cover two stretches at once.
 const ZIGZAG: [(i32, i32); 10] = [
     (-1, 2),
     (4, 2),
     (4, 10),
-    (9, 10),
-    (9, 3),
-    (14, 3),
-    (14, 10),
-    (17, 10),
+    (8, 10),
+    (8, 3),
+    (12, 3),
+    (12, 10),
+    (15, 10),
+    (15, 6),
+    (19, 6),
+];
+
+/// The moon map: a rover track snaking across the surface, in grid cells.
+const MOON: [(i32, i32); 12] = [
+    (-1, 7),
+    (2, 7),
+    (2, 1),
+    (6, 1),
+    (6, 12),
+    (10, 12),
+    (10, 1),
+    (14, 1),
+    (14, 12),
+    (17, 12),
     (17, 6),
     (19, 6),
 ];
 
-pub const MAP_COUNT: usize = 2;
+pub const MAP_COUNT: usize = 3;
 
 fn from_sketch(x: f32, y: f32) -> Vec2 {
     vec2(MAP_X + x * MAP_W / 512.0, MAP_Y + y * MAP_H / 512.0)
@@ -92,14 +108,55 @@ pub enum MapTheme {
     Meadow,
     /// Stone floor, a rug for the track, torches and pillars.
     Castle,
+    /// Grey regolith, craters and a lunar base.
+    Moon,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Difficulty {
+    Easy,
+    Medium,
+    Hard,
+}
+
+impl Difficulty {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Easy => "EASY",
+            Self::Medium => "MEDIUM",
+            Self::Hard => "HARD",
+        }
+    }
+
+    /// 1 to 3, for drawing difficulty pips.
+    pub fn level(self) -> usize {
+        match self {
+            Self::Easy => 1,
+            Self::Medium => 2,
+            Self::Hard => 3,
+        }
+    }
+
+    pub fn color(self) -> Color {
+        match self {
+            Self::Easy => Color::new(0.25, 0.65, 0.30, 1.0),
+            Self::Medium => Color::new(0.90, 0.60, 0.10, 1.0),
+            Self::Hard => Color::new(0.80, 0.20, 0.20, 1.0),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PropKind {
     Tree,
     Rock,
+    Pond,
     Torch,
     Pillar,
+    Armor,
+    Crater,
+    Lander,
+    Flag,
 }
 
 /// Scenery that towers can't be placed on.
@@ -129,6 +186,7 @@ pub struct Map {
     pub name: &'static str,
     pub description: &'static str,
     pub theme: Option<MapTheme>,
+    pub difficulty: Option<Difficulty>,
     pub waypoints: Vec<Vec2>,
     /// Where the spawn portal is drawn.
     pub portal: Vec2,
@@ -142,28 +200,42 @@ pub struct Map {
 
 impl Map {
     pub fn new(index: usize) -> Self {
-        let (name, description, theme, waypoints, portal, base) = match index % MAP_COUNT {
-            0 => (
-                "Sketch",
-                "Long meadow path. Normal",
-                MapTheme::Meadow,
-                SKETCH.iter().map(|&(x, y)| from_sketch(x, y)).collect(),
-                from_sketch(14.0, 236.0),
-                from_sketch(464.0, 478.0),
-            ),
-            _ => (
-                "Castle",
-                "Short rug to the throne. Hard",
-                MapTheme::Castle,
-                ZIGZAG.iter().map(|&(c, r)| grid_center(c, r)).collect(),
-                grid_center(0, 2),
-                grid_center(19, 6),
-            ),
-        };
+        let grid = |cells: &[(i32, i32)]| cells.iter().map(|&(c, r)| grid_center(c, r)).collect();
+        let (name, description, theme, difficulty, waypoints, portal, base) =
+            match index % MAP_COUNT {
+                0 => (
+                    "Sketch",
+                    "A long, winding meadow path",
+                    MapTheme::Meadow,
+                    Difficulty::Easy,
+                    SKETCH.iter().map(|&(x, y)| from_sketch(x, y)).collect(),
+                    from_sketch(14.0, 236.0),
+                    from_sketch(464.0, 478.0),
+                ),
+                1 => (
+                    "Moon",
+                    "Rover tracks between craters",
+                    MapTheme::Moon,
+                    Difficulty::Medium,
+                    grid(&MOON),
+                    grid_center(0, 7),
+                    grid_center(19, 6),
+                ),
+                _ => (
+                    "Castle",
+                    "A short rug to the throne",
+                    MapTheme::Castle,
+                    Difficulty::Hard,
+                    grid(&ZIGZAG),
+                    grid_center(0, 2),
+                    grid_center(19, 6),
+                ),
+            };
         let mut map = Self {
             name,
             description,
             theme: Some(theme),
+            difficulty: Some(difficulty),
             waypoints,
             portal,
             base,
@@ -174,8 +246,18 @@ impl Map {
         map.props = match theme {
             MapTheme::Meadow => map.meadow_props(),
             MapTheme::Castle => map.castle_props(),
+            MapTheme::Moon => map.moon_props(),
         };
         map
+    }
+
+    pub fn difficulty(&self) -> Difficulty {
+        self.difficulty.unwrap_or(Difficulty::Easy)
+    }
+
+    /// Total length of the path in pixels.
+    pub fn path_length(&self) -> f32 {
+        self.waypoints.windows(2).map(|w| w[0].distance(w[1])).sum()
     }
 
     pub fn theme(&self) -> MapTheme {
@@ -238,6 +320,19 @@ impl Map {
                 });
             }
         }
+        // One pond in the biggest open patch of grass it can find.
+        for _ in 0..300 {
+            let p = vec2(MAP_X + rng.next() * MAP_W, MAP_Y + rng.next() * MAP_H);
+            if in_map(p, 50.0) && self.free_spot(p, 46.0, &props, 70.0) {
+                props.push(Prop {
+                    kind: PropKind::Pond,
+                    pos: p,
+                    radius: 28.0,
+                    seed: rng.next(),
+                });
+                break;
+            }
+        }
         for _ in 0..200 {
             let p = vec2(MAP_X + rng.next() * MAP_W, MAP_Y + rng.next() * MAP_H);
             let rocks = props.iter().filter(|p| p.kind == PropKind::Rock).count();
@@ -278,6 +373,20 @@ impl Map {
                 }
             }
         }
+        // Suits of armor standing against the back wall.
+        let mut x = MAP_X + 60.0;
+        while x < MAP_X + MAP_W - 40.0 {
+            let p = vec2(x, MAP_Y + 56.0);
+            if self.free_spot(p, 10.0, &props, 60.0) {
+                props.push(Prop {
+                    kind: PropKind::Armor,
+                    pos: p,
+                    radius: 11.0,
+                    seed: rng.next(),
+                });
+            }
+            x += 240.0;
+        }
         let mut y = MAP_Y + 96.0;
         while y < MAP_Y + MAP_H {
             let mut x = MAP_X + 72.0;
@@ -294,6 +403,60 @@ impl Map {
                 x += 240.0;
             }
             y += 240.0;
+        }
+        props
+    }
+
+    /// Craters and boulders, plus a lander with its flag.
+    fn moon_props(&self) -> Vec<Prop> {
+        let mut rng = Rng(0x7f4a_7c15);
+        let mut props: Vec<Prop> = Vec::new();
+        // The lander parks in the first open spot along the bottom of the map.
+        for x in (0..20).map(|i| MAP_X + 60.0 + i as f32 * 45.0) {
+            let p = vec2(x, MAP_Y + MAP_H - 70.0);
+            if self.free_spot(p, 36.0, &props, 80.0) {
+                props.push(Prop {
+                    kind: PropKind::Lander,
+                    pos: p,
+                    radius: 22.0,
+                    seed: rng.next(),
+                });
+                let flag = p + vec2(38.0, -6.0);
+                if self.free_spot(flag, 12.0, &props, 30.0) {
+                    props.push(Prop {
+                        kind: PropKind::Flag,
+                        pos: flag,
+                        radius: 6.0,
+                        seed: rng.next(),
+                    });
+                }
+                break;
+            }
+        }
+        for _ in 0..500 {
+            let p = vec2(MAP_X + rng.next() * MAP_W, MAP_Y + rng.next() * MAP_H);
+            let craters = props.iter().filter(|p| p.kind == PropKind::Crater).count();
+            let r = 12.0 + rng.next() * 12.0;
+            if craters < 11 && in_map(p, r) && self.free_spot(p, r + 6.0, &props, r + 60.0) {
+                props.push(Prop {
+                    kind: PropKind::Crater,
+                    pos: p,
+                    radius: r,
+                    seed: rng.next(),
+                });
+            }
+        }
+        for _ in 0..200 {
+            let p = vec2(MAP_X + rng.next() * MAP_W, MAP_Y + rng.next() * MAP_H);
+            let rocks = props.iter().filter(|p| p.kind == PropKind::Rock).count();
+            if rocks < 7 && in_map(p, 20.0) && self.free_spot(p, 14.0, &props, 70.0) {
+                props.push(Prop {
+                    kind: PropKind::Rock,
+                    pos: p,
+                    radius: 9.0,
+                    seed: rng.next(),
+                });
+            }
         }
         props
     }
@@ -323,7 +486,7 @@ mod tests {
 
     #[test]
     fn castle_map_has_torches_and_props_block_placement() {
-        let map = Map::new(1);
+        let map = Map::new(2);
         assert_eq!(map.theme(), MapTheme::Castle);
         let torch = map
             .props
@@ -387,10 +550,25 @@ mod tests {
 
     #[test]
     fn castle_map_is_longer_than_before() {
-        let map = Map::new(1);
+        let map = Map::new(2);
         let length: f32 = map.waypoints.windows(2).map(|w| w[0].distance(w[1])).sum();
         // The original zigzag was 36 tiles long.
         assert!(length > 40.0 * TILE, "{}", length / TILE);
+    }
+
+    #[test]
+    fn maps_get_shorter_as_they_get_harder() {
+        let lengths: Vec<f32> = (0..MAP_COUNT).map(|i| Map::new(i).path_length()).collect();
+        let levels: Vec<usize> = (0..MAP_COUNT)
+            .map(|i| Map::new(i).difficulty().level())
+            .collect();
+        assert_eq!(levels, vec![1, 2, 3]);
+        assert!(
+            lengths[0] > lengths[1] && lengths[1] > lengths[2],
+            "{lengths:?}"
+        );
+        assert_eq!(Map::new(1).theme(), MapTheme::Moon);
+        assert!(Map::new(1).props.iter().any(|p| p.kind == PropKind::Lander));
     }
 
     #[test]

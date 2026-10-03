@@ -3,6 +3,21 @@
 Each release's number is set in `Cargo.toml` and shown in the window title and
 the settings menu. The commit for each release is listed under its heading.
 
+## v6.0
+
+Commit: the one titled "v6.0: Moon map, damage meter, Mercenary".
+
+- Minute Man renamed to Mercenary, with a helmet, goggles and olive gear
+- New Moon map (Medium): craters, a lander, rover tracks and a lunar base
+- Maps are labelled Easy / Medium / Hard with colored badges and route previews on the main menu
+- Castle lanes moved closer together so towers cover more of the rug
+- Damage meter (D): towers owned and damage dealt per tower type; each tower shows its own damage
+- Placing a tower inside a support farm's reach shows the buff badge and the farm's aura
+- Arrow, Mercenary and Cannon deal 50% more damage, enough for most starter builds to clear Sketch wave 30
+- Cannon blast radius is bigger, and its Rapid Reload path deals up to 3x damage to tanks and bosses
+- More detailed enemies (walking goblins, arrowhead runners, tanks on treads, crowned bosses), towers and maps
+- Rounded, shaded panels and buttons, settings icons and a redesigned main menu
+
 ## v5.0
 
 Commit: the one titled "v5.0: Minute Man, retry wave, easier start".
