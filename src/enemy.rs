@@ -64,7 +64,7 @@ impl EnemyKind {
         }
     }
 
-    /// How strongly slows and stuns affect this enemy (1 = fully).
+    /// How strongly slows, freezes and stuns affect this enemy (1 = fully).
     fn control_resistance(self) -> f32 {
         match self {
             Self::Boss => 0.5,
@@ -82,8 +82,10 @@ pub struct Enemy {
     pub max_hp: f32,
     pub slow_factor: f32,
     pub slow_timer: f32,
-    /// Extra damage taken while slowed.
+    pub freeze_timer: f32,
+    /// Extra damage fraction taken while `brittle_timer` runs.
     pub brittle: f32,
+    pub brittle_timer: f32,
     pub stun_timer: f32,
     pub burn_dps: f32,
     pub burn_timer: f32,
@@ -105,7 +107,9 @@ impl Enemy {
             max_hp: hp,
             slow_factor: 1.0,
             slow_timer: 0.0,
+            freeze_timer: 0.0,
             brittle: 0.0,
+            brittle_timer: 0.0,
             stun_timer: 0.0,
             burn_dps: 0.0,
             burn_timer: 0.0,
@@ -122,6 +126,10 @@ impl Enemy {
         self.slow_timer > 0.0
     }
 
+    pub fn frozen(&self) -> bool {
+        self.freeze_timer > 0.0
+    }
+
     pub fn stunned(&self) -> bool {
         self.stun_timer > 0.0
     }
@@ -131,7 +139,7 @@ impl Enemy {
     }
 
     pub fn speed(&self) -> f32 {
-        if self.stunned() {
+        if self.frozen() || self.stunned() {
             return 0.0;
         }
         let factor = if self.slowed() { self.slow_factor } else { 1.0 };
@@ -139,7 +147,7 @@ impl Enemy {
     }
 
     pub fn hit(&mut self, damage: f32) {
-        let mult = if self.slowed() {
+        let mult = if self.brittle_timer > 0.0 {
             1.0 + self.brittle
         } else {
             1.0
@@ -148,16 +156,28 @@ impl Enemy {
         self.since_hit = 0.0;
     }
 
-    pub fn apply_slow(&mut self, factor: f32, time: f32, brittle: f32) {
+    pub fn apply_slow(&mut self, factor: f32, time: f32) {
         let factor = 1.0 - (1.0 - factor) * self.kind.control_resistance();
-        if self.slowed() {
-            self.slow_factor = self.slow_factor.min(factor);
-            self.brittle = self.brittle.max(brittle);
+        self.slow_factor = if self.slowed() {
+            self.slow_factor.min(factor)
         } else {
-            self.slow_factor = factor;
-            self.brittle = brittle;
-        }
+            factor
+        };
         self.slow_timer = self.slow_timer.max(time);
+    }
+
+    pub fn apply_freeze(&mut self, time: f32) {
+        let time = time * self.kind.control_resistance();
+        self.freeze_timer = self.freeze_timer.max(time);
+    }
+
+    pub fn apply_brittle(&mut self, amount: f32, time: f32) {
+        self.brittle = if self.brittle_timer > 0.0 {
+            self.brittle.max(amount)
+        } else {
+            amount
+        };
+        self.brittle_timer = self.brittle_timer.max(time);
     }
 
     pub fn apply_stun(&mut self, time: f32) {
@@ -189,7 +209,12 @@ impl Enemy {
             self.hp -= self.burn_dps * dt.min(self.burn_timer);
         }
         let distance = self.speed() * dt;
-        self.slow_timer = (self.slow_timer - dt).max(0.0);
+        // Slows only tick down once the enemy has thawed out.
+        if !self.frozen() {
+            self.slow_timer = (self.slow_timer - dt).max(0.0);
+        }
+        self.freeze_timer = (self.freeze_timer - dt).max(0.0);
+        self.brittle_timer = (self.brittle_timer - dt).max(0.0);
         self.stun_timer = (self.stun_timer - dt).max(0.0);
         self.burn_timer = (self.burn_timer - dt).max(0.0);
         self.since_hit += dt;

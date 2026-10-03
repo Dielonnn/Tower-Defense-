@@ -72,22 +72,22 @@ const CANNON_UPGRADES: [[Upgrade; 4]; PATHS] = [
 
 const FROST_UPGRADES: [[Upgrade; 4]; PATHS] = [
     [
-        up("Cold Snap", "Slows by 50%", 90),
-        up("Permafrost", "Slow lasts 1s longer", 200),
-        up("Arctic Wind", "Slows by 60%", 450),
-        up("Absolute Zero", "Freezes enemies 1s", 1300),
+        up("Cold Snap", "Freezes 0.3s longer", 100),
+        up("Permafrost", "Pulses 25% faster", 240),
+        up("Glacier", "Freezes 0.5s longer", 550),
+        up("Absolute Zero", "+0.5s freeze, 20% faster", 1400),
     ],
     [
-        up("Wider Chill", "+0.4 tile range", 90),
-        up("Snowstorm", "+0.3 range, 20% faster", 230),
-        up("Blizzard", "+0.6 tile range", 520),
-        up("Eternal Winter", "+1 range, 30% faster", 1200),
+        up("Frostbite", "Thawed enemies slowed 30%", 120),
+        up("Chill Wind", "Slow 45%, +0.4 range", 260),
+        up("Blizzard", "Slow 55%, lasts 3s", 550),
+        up("Eternal Winter", "Slow 65%, +1 range", 1300),
     ],
     [
-        up("Icicles", "+5 damage", 100),
-        up("Brittle Ice", "Slowed take +15% dmg", 260),
-        up("Ice Shards", "+15 dmg, brittle 25%", 600),
-        up("Shatter", "+40 dmg, brittle 40%", 1400),
+        up("Icicles", "+6 damage", 100),
+        up("Brittle Ice", "Hit enemies take +15%", 260),
+        up("Ice Shards", "+18 dmg, brittle 25%", 600),
+        up("Shatter", "+50 dmg, brittle 40%", 1400),
     ],
 ];
 
@@ -114,16 +114,16 @@ const SNIPER_UPGRADES: [[Upgrade; 4]; PATHS] = [
 
 const FARM_UPGRADES: [[Upgrade; 4]; PATHS] = [
     [
-        up("More Seeds", "+15 gold per wave", 150),
-        up("Orchard", "+30 gold per wave", 320),
-        up("Plantation", "+70 gold per wave", 750),
-        up("Agri-Corp", "+180 gold per wave", 1900),
+        up("More Seeds", "+20 gold per wave", 150),
+        up("Orchard", "+40 gold per wave", 320),
+        up("Plantation", "+90 gold per wave", 750),
+        up("Agri-Corp", "+220 gold per wave", 1900),
     ],
     [
-        up("Tax Collector", "+1 gold/kill nearby", 200),
-        up("Marketplace", "+1 gold/kill, range", 380),
-        up("Trade Hub", "+2 gold/kill nearby", 800),
-        up("Merchant Guild", "+4 gold/kill, range", 2000),
+        up("Savings", "3% interest, max 40g", 180),
+        up("Bank", "5% interest, max 100g", 400),
+        up("Investments", "8% interest, max 200g", 850),
+        up("Wall Street", "12% interest, max 500g", 2100),
     ],
     [
         up("Herb Garden", "+1 life per wave", 160),
@@ -156,7 +156,7 @@ impl TowerKind {
         match self {
             Self::Arrow => "Pierces 2 tiles behind",
             Self::Cannon => "Slow, splash damage",
-            Self::Frost => "Slows all in range",
+            Self::Frost => "Freezes all in range",
             Self::Sniper => "Global range, big hits",
             Self::Farm => "Earns gold every wave",
         }
@@ -186,9 +186,9 @@ impl TowerKind {
         match self {
             Self::Arrow => ["Sharp Arrows", "Rapid Fire", "Long Shot"],
             Self::Cannon => ["Big Bombs", "Rapid Reload", "Incendiary"],
-            Self::Frost => ["Deep Freeze", "Blizzard", "Shatter"],
+            Self::Frost => ["Deep Freeze", "Frostbite", "Shatter"],
             Self::Sniper => ["Full Metal", "Fast Firing", "Ricochet"],
-            Self::Farm => ["Crops", "Market", "Clinic"],
+            Self::Farm => ["Crops", "Bank", "Clinic"],
         }
     }
 
@@ -202,6 +202,11 @@ impl TowerKind {
         }
     }
 
+    /// Whether the tower picks a single target (and so has a targeting mode).
+    pub fn has_targeting(self) -> bool {
+        matches!(self, Self::Arrow | Self::Cannon | Self::Sniper)
+    }
+
     /// Debuff towers only fire when an enemy in range lacks their debuff.
     pub fn is_debuff(self) -> bool {
         self == Self::Frost
@@ -212,7 +217,7 @@ impl TowerKind {
             Self::Arrow => Stats {
                 damage: 9.0,
                 range: 2.8 * TILE,
-                cooldown: 0.5,
+                cooldown: 0.7,
                 projectile_speed: 600.0,
                 pierce: 2.0 * TILE,
                 ..Stats::default()
@@ -226,11 +231,11 @@ impl TowerKind {
                 ..Stats::default()
             },
             Self::Frost => Stats {
-                damage: 3.0,
+                damage: 2.0,
                 range: 1.9 * TILE,
-                cooldown: 1.0,
-                slow: 0.6,
-                slow_time: 1.5,
+                // Slow enough that one frost can't freeze-lock a whole wave.
+                cooldown: 2.2,
+                freeze_time: 0.6,
                 ..Stats::default()
             },
             Self::Sniper => Stats {
@@ -241,7 +246,7 @@ impl TowerKind {
                 ..Stats::default()
             },
             Self::Farm => Stats {
-                income: 30,
+                income: 40,
                 ..Stats::default()
             },
         }
@@ -328,28 +333,37 @@ fn apply_upgrade(kind: TowerKind, path: usize, tier: u8, s: &mut Stats) {
             s.burn_time = 5.0;
         }
 
-        (Frost, 0, 0) => s.slow = 0.5,
-        (Frost, 0, 1) => s.slow_time += 1.0,
-        (Frost, 0, 2) => s.slow = 0.4,
-        (Frost, 0, 3) => s.freeze_time = 1.0,
-        (Frost, 1, 0) => s.range += 0.4 * TILE,
-        (Frost, 1, 1) => {
-            s.range += 0.3 * TILE;
+        (Frost, 0, 0) => s.freeze_time += 0.3,
+        (Frost, 0, 1) => s.cooldown *= 0.75,
+        (Frost, 0, 2) => s.freeze_time += 0.5,
+        (Frost, 0, 3) => {
+            s.freeze_time += 0.5;
             s.cooldown *= 0.8;
         }
-        (Frost, 1, 2) => s.range += 0.6 * TILE,
-        (Frost, 1, 3) => {
-            s.range += TILE;
-            s.cooldown *= 0.7;
+        (Frost, 1, 0) => {
+            s.slow = 0.7;
+            s.slow_time = 2.0;
         }
-        (Frost, 2, 0) => s.damage += 5.0,
+        (Frost, 1, 1) => {
+            s.slow = 0.55;
+            s.range += 0.4 * TILE;
+        }
+        (Frost, 1, 2) => {
+            s.slow = 0.45;
+            s.slow_time = 3.0;
+        }
+        (Frost, 1, 3) => {
+            s.slow = 0.35;
+            s.range += TILE;
+        }
+        (Frost, 2, 0) => s.damage += 6.0,
         (Frost, 2, 1) => s.brittle = 0.15,
         (Frost, 2, 2) => {
-            s.damage += 15.0;
+            s.damage += 18.0;
             s.brittle = 0.25;
         }
         (Frost, 2, 3) => {
-            s.damage += 40.0;
+            s.damage += 50.0;
             s.brittle = 0.4;
         }
 
@@ -372,29 +386,60 @@ fn apply_upgrade(kind: TowerKind, path: usize, tier: u8, s: &mut Stats) {
             s.bounces += 2;
         }
 
-        (Farm, 0, 0) => s.income += 15,
-        (Farm, 0, 1) => s.income += 30,
-        (Farm, 0, 2) => s.income += 70,
-        (Farm, 0, 3) => s.income += 180,
-        (Farm, 1, 0) => {
-            s.kill_bounty += 1;
-            s.bounty_range = 3.0 * TILE;
-        }
-        (Farm, 1, 1) => {
-            s.kill_bounty += 1;
-            s.bounty_range += 0.5 * TILE;
-        }
-        (Farm, 1, 2) => s.kill_bounty += 2,
-        (Farm, 1, 3) => {
-            s.kill_bounty += 4;
-            s.bounty_range += TILE;
-        }
+        (Farm, 0, 0) => s.income += 20,
+        (Farm, 0, 1) => s.income += 40,
+        (Farm, 0, 2) => s.income += 90,
+        (Farm, 0, 3) => s.income += 220,
+        (Farm, 1, 0) => (s.interest, s.interest_cap) = (0.03, 40),
+        (Farm, 1, 1) => (s.interest, s.interest_cap) = (0.05, 100),
+        (Farm, 1, 2) => (s.interest, s.interest_cap) = (0.08, 200),
+        (Farm, 1, 3) => (s.interest, s.interest_cap) = (0.12, 500),
         (Farm, 2, 0) => s.lives_per_wave += 1,
         (Farm, 2, 1) => s.lives_per_wave += 1,
         (Farm, 2, 2) => s.lives_per_wave += 2,
         (Farm, 2, 3) => s.lives_per_wave += 4,
 
         _ => {}
+    }
+}
+
+/// Which enemy in range a tower shoots at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Targeting {
+    /// Furthest along the path.
+    First,
+    /// Least far along the path.
+    Last,
+    /// Most health remaining.
+    Strongest,
+    /// Nearest to the tower.
+    Closest,
+    /// Bosses, then tanks, then the rest; furthest along within each.
+    Boss,
+}
+
+impl Targeting {
+    pub const ALL: [Targeting; 5] = [
+        Self::First,
+        Self::Last,
+        Self::Strongest,
+        Self::Closest,
+        Self::Boss,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::First => "First",
+            Self::Last => "Last",
+            Self::Strongest => "Strongest",
+            Self::Closest => "Closest",
+            Self::Boss => "Boss",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|&t| t == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
     }
 }
 
@@ -408,11 +453,11 @@ pub struct Stats {
     pub projectile_speed: f32,
     /// Splash radius in pixels; 0 for single target.
     pub splash: f32,
-    /// Speed multiplier applied to enemies that are hit; 1 for none.
+    /// Speed multiplier applied to enemies after they thaw; 1 for none.
     pub slow: f32,
     pub slow_time: f32,
     pub freeze_time: f32,
-    /// Extra damage fraction slowed enemies take from everything.
+    /// Extra damage fraction enemies take from everything after being hit.
     pub brittle: f32,
     /// How far arrows keep flying past their target, in pixels.
     pub pierce: f32,
@@ -426,9 +471,9 @@ pub struct Stats {
     /// Gold paid when a wave is cleared.
     pub income: u32,
     pub lives_per_wave: u32,
-    /// Extra gold for each enemy killed within `bounty_range`.
-    pub kill_bounty: u32,
-    pub bounty_range: f32,
+    /// Fraction of your gold paid as interest each wave, up to `interest_cap`.
+    pub interest: f32,
+    pub interest_cap: u32,
 }
 
 impl Default for Stats {
@@ -452,8 +497,8 @@ impl Default for Stats {
             boss_mult: 1.0,
             income: 0,
             lives_per_wave: 0,
-            kill_bounty: 0,
-            bounty_range: 0.0,
+            interest: 0.0,
+            interest_cap: 0,
         }
     }
 }
@@ -468,6 +513,7 @@ pub struct Tower {
     pub invested: u32,
     /// Time since the last shot, used for recoil and muzzle flash.
     pub since_shot: f32,
+    pub targeting: Targeting,
 }
 
 impl Tower {
@@ -480,6 +526,7 @@ impl Tower {
             angle: -std::f32::consts::FRAC_PI_2,
             invested: kind.cost(),
             since_shot: 10.0,
+            targeting: Targeting::First,
         }
     }
 
@@ -553,7 +600,7 @@ mod tests {
     fn upgrades_stack() {
         let base = TowerKind::Farm.stats([0; PATHS]);
         let upgraded = TowerKind::Farm.stats([2, 0, 1]);
-        assert_eq!(upgraded.income, base.income + 45);
+        assert_eq!(upgraded.income, base.income + 60);
         assert_eq!(upgraded.lives_per_wave, 1);
     }
 }

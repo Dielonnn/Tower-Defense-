@@ -4,7 +4,7 @@ use macroquad::prelude::*;
 
 use crate::enemy::{Enemy, EnemyKind};
 use crate::map::{Map, PATH_WIDTH, TILE, TOWER_RADIUS, distance_to_segment, in_map};
-use crate::tower::{Stats, Tower, TowerKind};
+use crate::tower::{Stats, Targeting, Tower, TowerKind};
 use crate::wave::{self, MAX_WAVES, Spawn};
 
 pub const START_GOLD: u32 = 150;
@@ -13,6 +13,16 @@ pub const START_LIVES: u32 = 20;
 pub const AUTO_DELAY: f32 = 1.5;
 /// How far a sniper shot can bounce to the next enemy.
 const BOUNCE_RANGE: f32 = 2.5 * TILE;
+/// Highest wave the sandbox level selector goes to.
+pub const SANDBOX_MAX_WAVE: u32 = 99;
+
+/// Full-screen menus that pause the game while open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Menu {
+    Settings,
+    /// Tower guide, showing the tower at this index of `TowerKind::ALL`.
+    Guide(usize),
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GameState {
@@ -103,6 +113,12 @@ pub struct Game {
     pub selected: Option<usize>,
     pub time: f32,
     pub message: Option<(String, f32)>,
+    /// Sandbox: everything is free, lives never drop, waves never end the game.
+    pub sandbox: bool,
+    pub night: bool,
+    pub menu: Option<Menu>,
+    /// Time since an enemy last reached the castle, for the hit flash.
+    pub since_base_hit: f32,
     spawn_queue: VecDeque<Spawn>,
     spawn_timer: f32,
     next_id: u32,
@@ -135,20 +151,51 @@ impl Game {
             selected: None,
             time: 0.0,
             message: None,
+            sandbox: false,
+            night: false,
+            menu: None,
+            since_base_hit: 10.0,
             spawn_queue: VecDeque::new(),
             spawn_timer: 0.0,
             next_id: 0,
         }
     }
 
+    /// Starts a fresh game, keeping the player's settings.
+    pub fn restart(&mut self, map_index: usize, sandbox: bool) {
+        let (speed, auto, night) = (self.speed, self.auto_play, self.night);
+        *self = Self::with_map(map_index);
+        self.speed = speed;
+        self.auto_play = auto;
+        self.night = night;
+        self.sandbox = sandbox;
+        if sandbox {
+            self.flash("Sandbox: everything is free");
+        }
+    }
+
     /// Switches to the next map. Only allowed before the first wave.
     pub fn next_map(&mut self) {
         if self.wave == 0 {
-            let (speed, auto) = (self.speed, self.auto_play);
-            *self = Self::with_map(self.map_index + 1);
-            self.speed = speed;
-            self.auto_play = auto;
+            self.restart(self.map_index + 1, self.sandbox);
         }
+    }
+
+    /// Pays `cost` if possible. Everything is free in sandbox mode.
+    fn charge(&mut self, cost: u32) -> bool {
+        if self.sandbox {
+            return true;
+        }
+        if self.gold < cost {
+            self.flash("Not enough gold");
+            return false;
+        }
+        self.gold -= cost;
+        true
+    }
+
+    pub fn can_afford(&self, cost: u32) -> bool {
+        self.sandbox || self.gold >= cost
     }
 
     pub fn tower_at(&self, pos: Vec2) -> Option<usize> {
@@ -167,30 +214,24 @@ impl Game {
     }
 
     pub fn place(&mut self, kind: TowerKind, pos: Vec2) -> bool {
-        if !self.can_place(pos) {
+        if !self.can_place(pos) || !self.charge(kind.cost()) {
             return false;
         }
-        if self.gold < kind.cost() {
-            self.flash("Not enough gold");
-            return false;
-        }
-        self.gold -= kind.cost();
         self.towers.push(Tower::new(kind, pos));
         true
     }
 
     pub fn upgrade_selected(&mut self, path: usize) {
-        let Some(tower) = self.selected.and_then(|i| self.towers.get_mut(i)) else {
+        let Some(i) = self.selected.filter(|&i| i < self.towers.len()) else {
             return;
         };
-        let Some(cost) = tower.upgrade_cost(path) else {
+        let Some(cost) = self.towers[i].upgrade_cost(path) else {
             return;
         };
-        if self.gold < cost {
-            self.flash("Not enough gold");
+        if !self.charge(cost) {
             return;
         }
-        self.gold -= cost;
+        let tower = &mut self.towers[i];
         tower.tiers[path] += 1;
         tower.invested += cost;
         let pos = tower.pos;
@@ -212,8 +253,48 @@ impl Game {
         });
     }
 
+    pub fn cycle_targeting(&mut self) {
+        if let Some(t) = self.selected.and_then(|i| self.towers.get_mut(i))
+            && t.kind.has_targeting()
+        {
+            t.targeting = t.targeting.next();
+        }
+    }
+
+    pub fn max_wave(&self) -> u32 {
+        if self.sandbox {
+            SANDBOX_MAX_WAVE
+        } else {
+            MAX_WAVES
+        }
+    }
+
     pub fn can_start_wave(&self) -> bool {
-        self.state == GameState::Playing && !self.wave_active && self.wave < MAX_WAVES
+        self.state == GameState::Playing && !self.wave_active && self.wave < self.max_wave()
+    }
+
+    /// Sandbox: spawn a single enemy at the current wave's strength.
+    pub fn sandbox_spawn(&mut self, kind: EnemyKind) {
+        if self.sandbox {
+            self.spawn(kind);
+        }
+    }
+
+    /// Sandbox: change which wave comes next (and how tough spawns are).
+    pub fn sandbox_set_wave(&mut self, wave: i32) {
+        if self.sandbox && !self.wave_active {
+            self.wave = wave.clamp(0, SANDBOX_MAX_WAVE as i32 - 1) as u32;
+        }
+    }
+
+    /// Sandbox: remove every enemy and cancel the current wave.
+    pub fn sandbox_clear(&mut self) {
+        if self.sandbox {
+            self.enemies.clear();
+            self.projectiles.clear();
+            self.spawn_queue.clear();
+            self.wave_active = false;
+        }
     }
 
     pub fn start_wave(&mut self) {
@@ -240,7 +321,7 @@ impl Game {
         let enemy = Enemy::new(
             self.next_id,
             kind,
-            wave::hp_multiplier(self.wave),
+            wave::hp_multiplier(self.wave.max(1)),
             &self.map.waypoints,
         );
         self.next_id += 1;
@@ -254,10 +335,11 @@ impl Game {
                 self.message = None;
             }
         }
-        if self.paused || self.state != GameState::Playing {
+        if self.paused || self.menu.is_some() || self.state != GameState::Playing {
             return;
         }
         self.time += dt;
+        self.since_base_hit += dt;
 
         if self.auto_play && self.can_start_wave() {
             self.auto_timer -= dt;
@@ -285,13 +367,16 @@ impl Game {
         self.auto_timer = AUTO_DELAY;
         let bonus = wave::clear_bonus(self.wave);
         let mut income = 0;
+        let savings = self.gold;
         for tower in &self.towers {
             let stats = tower.stats();
-            income += stats.income;
+            let interest = ((savings as f32 * stats.interest) as u32).min(stats.interest_cap);
+            let earned = stats.income + interest;
+            income += earned;
             self.lives += stats.lives_per_wave;
             let mut parts = Vec::new();
-            if stats.income > 0 {
-                parts.push(format!("+{}g", stats.income));
+            if earned > 0 {
+                parts.push(format!("+{earned}g"));
             }
             if stats.lives_per_wave > 0 {
                 parts.push(format!("+{} hp", stats.lives_per_wave));
@@ -306,7 +391,7 @@ impl Game {
             }
         }
         self.gold += bonus + income;
-        if self.wave >= MAX_WAVES {
+        if self.wave >= MAX_WAVES && !self.sandbox {
             self.state = GameState::Victory;
         } else if income > 0 {
             self.flash(&format!("Wave cleared! +{bonus} bonus, +{income} income"));
@@ -343,7 +428,22 @@ impl Game {
                 true
             }
         });
-        self.lives = self.lives.saturating_sub(leaked);
+        if leaked == 0 {
+            return;
+        }
+        // Enemies hit the castle at the end of the path.
+        let base = self.map.base;
+        self.since_base_hit = 0.0;
+        self.effects.push(Effect::ring(base, 36.0, RED, 0.4));
+        self.floaters.push(Floater {
+            pos: base - vec2(0.0, 30.0),
+            text: format!("-{leaked}"),
+            color: RED,
+            life: 1.0,
+        });
+        if !self.sandbox {
+            self.lives = self.lives.saturating_sub(leaked);
+        }
     }
 
     fn update_towers(&mut self, dt: f32) {
@@ -368,17 +468,21 @@ impl Game {
                 TowerKind::Farm => {}
 
                 TowerKind::Frost => {
-                    // Debuff tower: only pulse when someone in range isn't slowed yet,
-                    // then chill everything in range.
-                    let fresh = enemies.iter().any(|e| in_range(e) && !e.slowed());
+                    // Debuff tower: only pulse when someone in range isn't frozen,
+                    // then freeze everything in range.
+                    let fresh = enemies.iter().any(|e| in_range(e) && !e.frozen());
                     if tower.cooldown > 0.0 || (tower.kind.is_debuff() && !fresh) {
                         continue;
                     }
                     for e in enemies.iter_mut().filter(|e| in_range(e)) {
                         e.hit(stats.damage);
-                        e.apply_slow(stats.slow, stats.slow_time, stats.brittle);
-                        if stats.freeze_time > 0.0 {
-                            e.apply_stun(stats.freeze_time);
+                        e.apply_freeze(stats.freeze_time);
+                        // Slows kick in once the enemy thaws.
+                        if stats.slow < 1.0 {
+                            e.apply_slow(stats.slow, stats.slow_time);
+                        }
+                        if stats.brittle > 0.0 {
+                            e.apply_brittle(stats.brittle, stats.freeze_time + 2.0);
                         }
                     }
                     tower.cooldown = stats.cooldown;
@@ -387,7 +491,8 @@ impl Game {
                 }
 
                 TowerKind::Sniper => {
-                    let Some(first) = furthest(enemies, &in_range) else {
+                    let Some(first) = pick_target(enemies, &in_range, tower.targeting, tower.pos)
+                    else {
                         continue;
                     };
                     let aim = enemies[first].pos - tower.pos;
@@ -402,7 +507,8 @@ impl Game {
                 }
 
                 TowerKind::Arrow | TowerKind::Cannon => {
-                    let Some(i) = furthest(enemies, &in_range) else {
+                    let Some(i) = pick_target(enemies, &in_range, tower.targeting, tower.pos)
+                    else {
                         continue;
                     };
                     let target = &enemies[i];
@@ -520,15 +626,7 @@ impl Game {
                 continue;
             }
             let e = self.enemies.swap_remove(i);
-            let bounty: u32 = self
-                .towers
-                .iter()
-                .map(|t| t.stats())
-                .zip(&self.towers)
-                .filter(|(s, t)| s.kill_bounty > 0 && t.pos.distance(e.pos) <= s.bounty_range)
-                .map(|(s, _)| s.kill_bounty)
-                .sum();
-            let reward = e.kind.reward() + bounty;
+            let reward = e.kind.reward();
             self.gold += reward;
             self.effects.push(Effect::ring(
                 e.pos,
@@ -558,13 +656,39 @@ impl Game {
     }
 }
 
-/// Index of the enemy furthest along the path that passes `filter`.
-fn furthest(enemies: &[Enemy], filter: &impl Fn(&Enemy) -> bool) -> Option<usize> {
+/// Index of the enemy passing `filter` that `mode` prefers most.
+fn pick_target(
+    enemies: &[Enemy],
+    filter: &impl Fn(&Enemy) -> bool,
+    mode: Targeting,
+    origin: Vec2,
+) -> Option<usize> {
+    // Higher is better; the second value breaks ties.
+    let score = |e: &Enemy| -> (f32, f32) {
+        match mode {
+            Targeting::First => (e.traveled, 0.0),
+            Targeting::Last => (-e.traveled, 0.0),
+            Targeting::Strongest => (e.hp, e.traveled),
+            Targeting::Closest => (-e.pos.distance(origin), e.traveled),
+            Targeting::Boss => {
+                let rank = match e.kind {
+                    EnemyKind::Boss => 3.0,
+                    EnemyKind::Tank => 2.0,
+                    EnemyKind::Runner => 1.0,
+                    EnemyKind::Grunt => 0.0,
+                };
+                (rank, e.traveled)
+            }
+        }
+    };
     enemies
         .iter()
         .enumerate()
         .filter(|(_, e)| filter(e))
-        .max_by(|a, b| a.1.traveled.total_cmp(&b.1.traveled))
+        .max_by(|a, b| {
+            let (sa, sb) = (score(a.1), score(b.1));
+            sa.0.total_cmp(&sb.0).then(sa.1.total_cmp(&sb.1))
+        })
         .map(|(i, _)| i)
 }
 
@@ -711,16 +835,20 @@ mod tests {
     }
 
     #[test]
-    fn frost_hits_everything_in_range_but_skips_when_all_slowed() {
+    fn frost_freezes_everything_in_range_but_skips_when_all_frozen() {
         let mut game = Game::new();
         let origin = grass();
         game.towers.push(Tower::new(TowerKind::Frost, origin));
         enemy_at(&mut game, EnemyKind::Tank, origin + vec2(40.0, 0.0));
         enemy_at(&mut game, EnemyKind::Tank, origin + vec2(-40.0, 20.0));
         game.update_towers(0.0);
-        assert!(game.enemies.iter().all(|e| e.slowed() && e.hp < e.max_hp));
+        assert!(
+            game.enemies
+                .iter()
+                .all(|e| e.frozen() && !e.slowed() && e.hp < e.max_hp)
+        );
 
-        // Everything in range is already slowed, so the next pulse is held.
+        // Everything in range is already frozen, so the next pulse is held.
         let hp: Vec<f32> = game.enemies.iter().map(|e| e.hp).collect();
         game.towers[0].cooldown = 0.0;
         game.update_towers(0.0);
@@ -750,7 +878,135 @@ mod tests {
         run(&mut game, 120.0);
         assert!(!game.wave_active);
         let kills = 0; // no defenses, so nothing was killed
-        assert_eq!(game.gold, gold + kills + wave::clear_bonus(1) + 30);
+        assert_eq!(game.gold, gold + kills + wave::clear_bonus(1) + 40);
+    }
+
+    #[test]
+    fn farm_bank_pays_capped_interest() {
+        let mut game = Game::new();
+        game.lives = 100;
+        game.towers.push(Tower::new(TowerKind::Farm, grass()));
+        game.towers[0].tiers = [0, 1, 0]; // 3% interest, max 40g
+        game.gold = 10_000;
+        game.start_wave();
+        run(&mut game, 120.0);
+        assert_eq!(game.gold, 10_000 + wave::clear_bonus(1) + 40 + 40);
+    }
+
+    #[test]
+    fn frostbite_slows_after_thawing() {
+        let mut game = Game::new();
+        let origin = grass();
+        game.towers.push(Tower::new(TowerKind::Frost, origin));
+        game.towers[0].tiers = [0, 1, 0];
+        enemy_at(&mut game, EnemyKind::Tank, origin + vec2(40.0, 0.0));
+        game.update_towers(0.0);
+        let e = &mut game.enemies[0];
+        assert!(e.frozen() && e.slowed());
+        // The slow outlasts the freeze.
+        e.advance(0.7, &game.map.waypoints);
+        assert!(!e.frozen() && e.slowed());
+    }
+
+    #[test]
+    fn lone_frost_cannot_lock_a_runner_wave() {
+        let mut game = Game::new();
+        game.lives = 1000;
+        // Right beside the first stretch of path.
+        game.towers.push(Tower::new(
+            TowerKind::Frost,
+            game.map.waypoints[1] + vec2(-60.0, -45.0),
+        ));
+        for _ in 0..12 {
+            game.spawn(EnemyKind::Runner);
+            run(&mut game, 0.2);
+        }
+        let mut clear = Game::new();
+        clear.lives = 1000;
+        for _ in 0..12 {
+            clear.spawn(EnemyKind::Runner);
+            run(&mut clear, 0.2);
+        }
+        // Run both until every runner has reached the castle.
+        let mut frost_time = 0.0;
+        while !game.enemies.is_empty() && frost_time < 120.0 {
+            run(&mut game, 0.5);
+            frost_time += 0.5;
+        }
+        let mut clear_time = 0.0;
+        while !clear.enemies.is_empty() {
+            run(&mut clear, 0.5);
+            clear_time += 0.5;
+        }
+        assert!(
+            game.enemies.is_empty(),
+            "runners got stuck at the frost tower"
+        );
+        assert!(
+            frost_time < clear_time + 6.0,
+            "{frost_time} vs {clear_time}"
+        );
+    }
+
+    #[test]
+    fn targeting_modes() {
+        let mut game = Game::new();
+        let origin = grass();
+        let near = enemy_at(&mut game, EnemyKind::Grunt, origin + vec2(30.0, 0.0));
+        let tank = enemy_at(&mut game, EnemyKind::Tank, origin + vec2(90.0, 0.0));
+        let boss = enemy_at(&mut game, EnemyKind::Boss, origin + vec2(120.0, 0.0));
+        let ahead = enemy_at(&mut game, EnemyKind::Runner, origin + vec2(0.0, 100.0));
+        let travel = [(near, 10.0), (tank, 20.0), (boss, 5.0), (ahead, 50.0)];
+        for (id, d) in travel {
+            game.enemies
+                .iter_mut()
+                .find(|e| e.id == id)
+                .unwrap()
+                .traveled = d;
+        }
+        let pick = |mode| {
+            let i = pick_target(&game.enemies, &|_: &Enemy| true, mode, origin).unwrap();
+            game.enemies[i].id
+        };
+        assert_eq!(pick(Targeting::First), ahead);
+        assert_eq!(pick(Targeting::Last), boss);
+        assert_eq!(pick(Targeting::Strongest), boss);
+        assert_eq!(pick(Targeting::Closest), near);
+        assert_eq!(pick(Targeting::Boss), boss);
+    }
+
+    #[test]
+    fn enemies_damage_the_castle() {
+        let mut game = Game::new();
+        game.spawn(EnemyKind::Tank);
+        let e = game.enemies.last_mut().unwrap();
+        let end = game.map.waypoints.len() - 1;
+        e.pos = game.map.waypoints[end] - vec2(0.0, 5.0);
+        e.next_waypoint = end;
+        run(&mut game, 0.5);
+        assert!(game.enemies.is_empty());
+        assert_eq!(game.lives, START_LIVES - 2);
+        assert!(game.since_base_hit < 1.0);
+    }
+
+    #[test]
+    fn sandbox_is_free_and_lives_never_drop() {
+        let mut game = Game::new();
+        game.restart(0, true);
+        game.gold = 0;
+        assert!(game.place(TowerKind::Sniper, grass()));
+        game.selected = Some(0);
+        game.upgrade_selected(0);
+        assert_eq!(game.towers[0].tiers[0], 1);
+        game.sandbox_set_wave(40);
+        game.sandbox_spawn(EnemyKind::Boss);
+        assert!(game.enemies[0].max_hp > EnemyKind::Boss.base_hp() * 10.0);
+        game.sandbox_clear();
+        game.start_wave();
+        assert_eq!(game.wave, 41);
+        run(&mut game, 200.0);
+        assert_eq!(game.lives, START_LIVES);
+        assert_eq!(game.state, GameState::Playing);
     }
 
     #[test]

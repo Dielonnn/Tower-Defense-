@@ -36,8 +36,8 @@ no installer or extra files needed.
 ## How to play
 
 You start with 150 gold and 20 lives. Killing enemies earns gold, and
-clearing a wave pays a bonus. Each enemy that reaches the castle costs lives
-(tanks cost 2, bosses cost 10).
+clearing a wave pays a bonus. Enemies that reach the castle at the end of
+the path damage it and cost you lives (tanks 2, bosses 10).
 
 Towers can be placed anywhere on the grass, as long as they don't touch the
 path or another tower.
@@ -49,13 +49,28 @@ path or another tower.
 | Right click / `Esc` / Cancel button | Stop placing, or deselect |
 | Left click on a tower | Open its upgrade panel |
 | `,` `.` `/` or the path cards | Buy the next upgrade on path 1, 2 or 3 |
+| `Tab` or the Target button | Cycle targeting: First, Last, Strongest, Closest, Boss |
 | `S` / `Delete` | Sell selected tower for 70% of what you spent |
 | `Space` / `N` | Start the next wave |
 | `A` | Toggle auto play (next wave starts on its own) |
 | `F` | Cycle game speed (x1, x2, x3) |
 | `P` | Pause |
 | `M` | Switch map (before the first wave only) |
+| `Esc` (nothing selected) or Settings button | Open the settings menu |
 | `R` | Restart after game over or victory |
+
+### Settings menu
+
+- **Theme**: switch between day and night.
+- **Tower guide**: every tower's stats and all 12 of its upgrades.
+- **New game** / **New sandbox game**: restart in normal or sandbox mode.
+
+### Sandbox mode
+
+For testing builds. Towers and upgrades are free, lives never drop, and the
+game never ends. The sidebar gets extra controls to spawn any enemy (Shift
+for five at once), pick which wave comes next (this also sets how tough
+spawned enemies are, up to wave 99) and clear the field.
 
 ### Towers
 
@@ -63,9 +78,12 @@ path or another tower.
 | --- | --- | --- |
 | Arrow | 50 | Arrows fly through their target and keep going 2 tiles, hitting everything on the way |
 | Cannon | 90 | Slow, splash damage |
-| Frost | 70 | Pulses to slow and damage every enemy in range. Holds fire while everything in range is already slowed |
+| Frost | 70 | Pulses to freeze every enemy in range. Holds fire while everything in range is already frozen |
 | Sniper | 120 | Global range, heavy damage, fires slowly |
-| Farm | 150 | No attack. Pays 30 gold every time a wave is cleared |
+| Farm | 150 | No attack. Pays 40 gold every time a wave is cleared |
+
+Arrow, Cannon and Sniper have a targeting mode. Frost hits everything in
+range, so it doesn't need one.
 
 ### Upgrades
 
@@ -77,16 +95,16 @@ labels such as `2-0-3` show the tiers bought on each path.
 | --- | --- | --- | --- |
 | Arrow | Sharp Arrows: damage | Rapid Fire: speed and multi-shot | Long Shot: range and pierce |
 | Cannon | Big Bombs: damage, blast, stun | Rapid Reload: fire rate | Incendiary: burning |
-| Frost | Deep Freeze: stronger slow, freeze | Blizzard: range and pulse rate | Shatter: damage, slowed enemies take extra damage |
+| Frost | Deep Freeze: longer freezes, faster pulses | Frostbite: slows enemies after they thaw | Shatter: damage, hit enemies take extra damage |
 | Sniper | Full Metal: damage, boss killer | Fast Firing: fire rate | Ricochet: bouncing shots, gold per wave |
-| Farm | Crops: more gold per wave | Market: gold for kills near the farm | Clinic: lives per wave |
+| Farm | Crops: more gold per wave | Bank: interest on your gold each wave | Clinic: lives per wave |
 
 ### Enemies
 
 - **Grunt**: the standard enemy.
 - **Runner**: fast and fragile, arrives in bursts from wave 3.
 - **Tank**: slow and tough, from wave 5.
-- **Boss**: shows up every 5th wave, more each time. Half as affected by slows and stuns.
+- **Boss**: shows up every 5th wave, more each time. Freezes, slows and stuns only half affect it.
 
 Enemy health grows every wave.
 

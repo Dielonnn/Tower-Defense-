@@ -16,22 +16,23 @@ pub const SCREEN_H: f32 = TOP_BAR + MAP_H;
 pub const PATH_WIDTH: f32 = 40.0;
 pub const TOWER_RADIUS: f32 = 18.0;
 
-/// The default map, traced from a 512x512 sketch. It enters from the left,
-/// loops back over itself twice and leaves through the bottom.
+/// The default map, traced from a 512x512 sketch and straightened so every
+/// segment is horizontal or vertical. It enters from the left, loops back
+/// over itself twice and ends at the castle near the bottom.
 const SKETCH: [(f32, f32); 13] = [
     (-24.0, 236.0),
-    (190.0, 236.0),
-    (188.0, 84.0),
-    (80.0, 89.0),
-    (80.0, 397.0),
-    (265.0, 392.0),
-    (257.0, 292.0),
-    (36.0, 301.0),
-    (48.0, 466.0),
-    (362.0, 462.0),
+    (189.0, 236.0),
+    (189.0, 86.0),
+    (80.0, 86.0),
+    (80.0, 395.0),
+    (261.0, 395.0),
+    (261.0, 297.0),
+    (42.0, 297.0),
+    (42.0, 464.0),
+    (362.0, 464.0),
     (362.0, 84.0),
-    (461.0, 83.0),
-    (467.0, 545.0),
+    (464.0, 84.0),
+    (464.0, 478.0),
 ];
 
 /// The original zigzag map, in 48px grid cells.
@@ -45,7 +46,7 @@ const ZIGZAG: [(i32, i32); 10] = [
     (14, 9),
     (17, 9),
     (17, 5),
-    (20, 5),
+    (19, 5),
 ];
 
 pub const MAP_COUNT: usize = 2;
@@ -87,7 +88,8 @@ pub struct Map {
     pub waypoints: Vec<Vec2>,
     /// Where the spawn portal is drawn.
     pub portal: Vec2,
-    /// Where the castle is drawn.
+    /// The castle; it sits on the last waypoint, so enemies that reach it
+    /// damage it.
     pub base: Vec2,
     /// Grass tufts for decoration: position, radius, shade.
     pub decor: Vec<(Vec2, f32, f32)>,
@@ -100,7 +102,7 @@ impl Map {
                 "Sketch",
                 SKETCH.iter().map(|&(x, y)| from_sketch(x, y)).collect(),
                 from_sketch(14.0, 236.0),
-                from_sketch(466.0, 482.0),
+                from_sketch(464.0, 478.0),
             ),
             _ => (
                 "Zigzag",
@@ -154,12 +156,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sketch_enters_left_and_exits_bottom() {
-        let map = Map::new(0);
-        let first = map.waypoints[0];
-        let last = *map.waypoints.last().unwrap();
-        assert!(first.x < MAP_X && !in_map(first, 0.0));
-        assert!(last.y > MAP_Y + MAP_H);
+    fn paths_start_off_map_and_end_at_the_castle() {
+        for i in 0..MAP_COUNT {
+            let map = Map::new(i);
+            assert!(!in_map(map.waypoints[0], 0.0));
+            assert_eq!(*map.waypoints.last().unwrap(), map.base);
+        }
+    }
+
+    #[test]
+    fn segments_are_straight() {
+        for i in 0..MAP_COUNT {
+            for w in Map::new(i).waypoints.windows(2) {
+                assert!(w[0].x == w[1].x || w[0].y == w[1].y, "{w:?}");
+            }
+        }
     }
 
     #[test]
