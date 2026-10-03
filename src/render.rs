@@ -3,6 +3,7 @@ use macroquad::prelude::*;
 use crate::enemy::EnemyKind;
 use crate::game::{EffectShape, Game, GameState, Menu, Shot};
 use crate::map::*;
+use crate::profile::{BRANCHES, Profile, SKILLS};
 use crate::tower::{PATHS, Stats, TIERS, Tower, TowerKind};
 use crate::ui::{self, Lobby, SettingsItem};
 use crate::wave::MAX_WAVES;
@@ -99,6 +100,7 @@ pub fn draw(game: &Game) {
     draw_sidebar(game, t);
     draw_top_bar(game, t);
     draw_message(game);
+    draw_xp_toast(game);
     draw_overlay(game, t);
     draw_menus(game, true, t);
 }
@@ -107,6 +109,7 @@ fn draw_menus(game: &Game, in_game: bool, t: &Theme) {
     match game.menu {
         Some(Menu::Settings) => draw_settings(game, in_game, t),
         Some(Menu::Guide(i)) => draw_guide(i, t),
+        Some(Menu::Skills) => {}
         None => {}
     }
 }
@@ -949,7 +952,7 @@ fn draw_placement_preview(game: &Game, t: &Theme) {
         }
         return;
     };
-    let ok = game.can_place(m) && game.can_afford(kind.cost());
+    let ok = game.can_place(m) && game.can_afford(game.tower_cost(kind));
     let tint = if ok { WHITE } else { RED };
     // Show where support farms reach, so it's easy to place inside a buff.
     if kind != TowerKind::Farm {
@@ -962,7 +965,7 @@ fn draw_placement_preview(game: &Game, t: &Theme) {
         }
     }
     let buffed = game.buffed_at(kind, m);
-    draw_range_circle(m, kind.stats([0; PATHS]).range, tint);
+    draw_range_circle(m, game.preview_stats(kind).range, tint);
     draw_tower(&Tower::new(0, kind, m), m, game.time, 0.6, buffed, t);
     if buffed {
         let label = "Buffed by support farm";
@@ -1096,6 +1099,152 @@ fn tier_color(tier: u8, time: f32) -> Option<Color> {
     }
 }
 
+/// Path colors used for banners: damage red, speed blue, special green.
+const PATH_COLORS: [Color; 3] = [
+    Color::new(0.85, 0.25, 0.25, 1.0),
+    Color::new(0.25, 0.50, 0.90, 1.0),
+    Color::new(0.25, 0.70, 0.35, 1.0),
+];
+
+/// A capybara seen from above, facing `dir`. Returns where its head is so
+/// hats and crowns can be added.
+fn draw_capybara(c: Vec2, dir: Vec2, s: f32, a: &dyn Fn(Color) -> Color) -> Vec2 {
+    let side = vec2(-dir.y, dir.x);
+    let fur = Color::new(0.64, 0.46, 0.28, 1.0);
+    let shade = Color::new(0.47, 0.33, 0.20, 1.0);
+    // Dark outline so the capybara stands out from whatever it sits on.
+    let outline = a(Color::new(0.22, 0.14, 0.08, 1.0));
+    let head_at = c + dir * 8.0 * s;
+    quad(c - dir * 1.5 * s, dir, 8.2 * s, 8.7 * s, outline);
+    draw_circle(
+        c.x - dir.x * 7.0 * s,
+        c.y - dir.y * 7.0 * s,
+        8.6 * s,
+        outline,
+    );
+    draw_circle(head_at.x, head_at.y, 7.0 * s, outline);
+    quad(head_at + dir * 4.5 * s, dir, 4.4 * s, 5.6 * s, outline);
+    draw_circle(
+        c.x - dir.x * 7.0 * s,
+        c.y - dir.y * 7.0 * s,
+        7.5 * s,
+        a(shade),
+    );
+    quad(c - dir * 1.5 * s, dir, 7.0 * s, 7.5 * s, a(fur));
+    draw_circle(
+        c.x - dir.x * 7.0 * s,
+        c.y - dir.y * 7.0 * s,
+        6.8 * s,
+        a(fur),
+    );
+    // Fur texture.
+    for k in [-1.0, 1.0] {
+        let p0 = c + side * k * 3.0 * s - dir * 6.0 * s;
+        let p1 = p0 + dir * 4.0 * s;
+        draw_line(p0.x, p0.y, p1.x, p1.y, 1.0, a(shade));
+    }
+    let head = c + dir * 8.0 * s;
+    draw_circle(head.x, head.y, 5.8 * s, a(fur));
+    // The big blunt snout capybaras are known for.
+    quad(
+        head + dir * 4.5 * s,
+        dir,
+        3.2 * s,
+        4.4 * s,
+        a(Color::new(0.52, 0.37, 0.23, 1.0)),
+    );
+    for k in [-1.0, 1.0] {
+        let nostril = head + dir * 7.0 * s + side * k * 1.6 * s;
+        draw_circle(
+            nostril.x,
+            nostril.y,
+            0.9 * s,
+            a(Color::new(0.2, 0.12, 0.08, 1.0)),
+        );
+        let ear = head - dir * 2.5 * s + side * k * 4.8 * s;
+        draw_circle(ear.x, ear.y, 1.9 * s, a(Color::new(0.35, 0.24, 0.15, 1.0)));
+        let eye = head + dir * 1.5 * s + side * k * 3.3 * s;
+        draw_circle(eye.x, eye.y, 1.1 * s, a(BLACK));
+    }
+    head
+}
+
+fn draw_crown(head: Vec2, dir: Vec2, a: &dyn Fn(Color) -> Color) {
+    let side = vec2(-dir.y, dir.x);
+    let base = head - dir * 1.0;
+    let gold = Color::new(1.0, 0.82, 0.2, 1.0);
+    for k in [-1.0, 0.0, 1.0] {
+        let b = base + side * k * 3.0;
+        draw_triangle(b - side * 2.0, b + side * 2.0, b - dir * 5.0, a(gold));
+    }
+    draw_line(
+        base.x - side.x * 5.0,
+        base.y - side.y * 5.0,
+        base.x + side.x * 5.0,
+        base.y + side.y * 5.0,
+        2.5,
+        a(gold),
+    );
+    draw_circle(
+        base.x - dir.x * 3.0,
+        base.y - dir.y * 3.0,
+        1.2,
+        a(Color::new(0.9, 0.2, 0.3, 1.0)),
+    );
+}
+
+/// The platform under a tower. It grows battlements and a banner as the
+/// tower is upgraded.
+fn draw_platform(
+    tower: &Tower,
+    c: Vec2,
+    fill: Color,
+    edge: Color,
+    time: f32,
+    a: &dyn Fn(Color) -> Color,
+) {
+    let top = tower.tiers.iter().copied().max().unwrap_or(0);
+    if top >= 4 {
+        let pulse = 0.5 + 0.5 * (time * 3.0).sin();
+        draw_circle(
+            c.x,
+            c.y,
+            TOWER_RADIUS + 6.0 + pulse * 2.0,
+            a(Color::new(1.0, 0.85, 0.3, 0.18)),
+        );
+    }
+    if top >= 2 {
+        for k in 0..8 {
+            let ang = k as f32 / 8.0 * std::f32::consts::TAU + 0.39;
+            let q = c + vec2(ang.cos(), ang.sin()) * (TOWER_RADIUS - 1.0);
+            draw_rectangle(q.x - 3.0, q.y - 3.0, 6.0, 6.0, a(darken(fill, 0.85)));
+            draw_rectangle_lines(q.x - 3.0, q.y - 3.0, 6.0, 6.0, 1.0, a(edge));
+        }
+    }
+    draw_circle(c.x, c.y, TOWER_RADIUS - 1.0, a(fill));
+    draw_circle_lines(c.x, c.y, TOWER_RADIUS - 1.0, 2.0, a(edge));
+    if top >= 3 {
+        // Banner in the color of the path this tower is specialised in.
+        let path = (0..PATHS).max_by_key(|&p| tower.tiers[p]).unwrap_or(0);
+        let pole = c + vec2(-TOWER_RADIUS + 3.0, -TOWER_RADIUS + 5.0);
+        draw_line(
+            pole.x,
+            pole.y + 6.0,
+            pole.x,
+            pole.y - 16.0,
+            2.0,
+            a(DARKGRAY),
+        );
+        let wave = (time * 4.0 + c.x).sin() * 1.5;
+        draw_triangle(
+            vec2(pole.x, pole.y - 16.0),
+            vec2(pole.x + 11.0, pole.y - 12.0 + wave),
+            vec2(pole.x, pole.y - 8.0),
+            a(PATH_COLORS[path]),
+        );
+    }
+}
+
 fn draw_tower(tower: &Tower, c: Vec2, time: f32, alpha: f32, buffed: bool, t: &Theme) {
     let a = |col: Color| with_alpha(col, col.a * alpha);
     let color = a(tower.kind.color());
@@ -1103,9 +1252,10 @@ fn draw_tower(tower: &Tower, c: Vec2, time: f32, alpha: f32, buffed: bool, t: &T
     let dir = vec2(tower.angle.cos(), tower.angle.sin());
     let side = vec2(-dir.y, dir.x);
     let recoil = (1.0 - tower.since_shot / 0.12).max(0.0) * 4.0;
+    let [t0, t1, t2] = tower.tiers;
+    let top = t0.max(t1).max(t2);
 
     if t.night {
-        // Lantern glow so towers stand out in the dark.
         draw_circle(
             c.x,
             c.y,
@@ -1120,124 +1270,151 @@ fn draw_tower(tower: &Tower, c: Vec2, time: f32, alpha: f32, buffed: bool, t: &T
         a(Color::new(0.0, 0.0, 0.0, 0.25)),
     );
 
-    match tower.kind {
-        TowerKind::Farm => draw_farm(tower, c, time, alpha),
-        TowerKind::Mercenary => draw_mercenary(tower, c, alpha),
+    let head = match tower.kind {
+        TowerKind::Farm => draw_farm(tower, c, time, &a),
+        TowerKind::Mercenary => draw_mercenary(tower, c, &a),
         TowerKind::Arrow => {
-            // Wooden platform with a crossbow on top.
-            draw_poly(
-                c.x,
-                c.y,
-                8,
-                TOWER_RADIUS,
-                22.5,
-                a(Color::new(0.50, 0.34, 0.20, 1.0)),
+            // Capybara archer on a wooden deck with a crossbow.
+            draw_platform(
+                tower,
+                c,
+                Color::new(0.80, 0.72, 0.55, 1.0),
+                Color::new(0.50, 0.40, 0.26, 1.0),
+                time,
+                &a,
             );
-            draw_poly_lines(
-                c.x,
-                c.y,
-                8,
-                TOWER_RADIUS,
-                22.5,
-                2.0,
-                a(Color::new(0.30, 0.20, 0.12, 1.0)),
-            );
-            for k in [-1.0, 0.0, 1.0] {
-                let y = c.y + k * 7.0;
-                draw_line(
-                    c.x - 14.0,
-                    y,
-                    c.x + 14.0,
-                    y,
-                    1.0,
-                    a(Color::new(0.35, 0.23, 0.14, 1.0)),
-                );
-            }
-            let back = c - dir * (7.0 - recoil * 0.5);
-            let front = c + dir * (14.0 - recoil);
-            draw_line(back.x, back.y, front.x, front.y, 5.0, dark);
-            let limb_root = c + dir * 9.0;
-            let tip_l = c + dir * 3.0 + side * 13.0;
-            let tip_r = c + dir * 3.0 - side * 13.0;
-            draw_line(limb_root.x, limb_root.y, tip_l.x, tip_l.y, 3.0, color);
-            draw_line(limb_root.x, limb_root.y, tip_r.x, tip_r.y, 3.0, color);
-            let nock = c - dir * (3.0 - recoil);
+            let head = draw_capybara(c - dir * 6.0, dir, 0.9, &a);
+            // Ballista path: bigger, sturdier limbs.
+            let limb = if t0 >= 3 { 15.0 } else { 11.0 };
+            let width = if t0 >= 3 { 4.0 } else { 2.5 };
+            let w = c + dir * 10.0;
+            let back = w - dir * (6.0 - recoil * 0.5);
+            let front = w + dir * (12.0 - recoil);
+            draw_line(back.x, back.y, front.x, front.y, 4.0, dark);
+            let root = w + dir * 7.0;
+            let tip_l = w + dir * 1.0 + side * limb;
+            let tip_r = w + dir * 1.0 - side * limb;
+            draw_line(root.x, root.y, tip_l.x, tip_l.y, width, color);
+            draw_line(root.x, root.y, tip_r.x, tip_r.y, width, color);
+            let nock = w - dir * (3.0 - recoil);
             let string = a(Color::new(0.95, 0.92, 0.85, 1.0));
             draw_line(tip_l.x, tip_l.y, nock.x, nock.y, 1.0, string);
             draw_line(tip_r.x, tip_r.y, nock.x, nock.y, 1.0, string);
             if tower.since_shot > 0.15 {
-                let bolt = c + dir * 17.0;
-                draw_line(nock.x, nock.y, bolt.x, bolt.y, 2.0, string);
+                // Rapid fire path: several bolts loaded side by side.
+                let bolts = tower.stats().arrows.min(5) as i32;
+                let fletch = if t2 >= 2 {
+                    Color::new(0.3, 0.8, 0.4, 1.0)
+                } else {
+                    Color::new(0.9, 0.3, 0.3, 1.0)
+                };
+                for k in 0..bolts {
+                    let off = (k as f32 - (bolts - 1) as f32 / 2.0) * 3.5;
+                    let n = nock + side * off;
+                    let tip = n + dir * if t2 >= 2 { 22.0 } else { 18.0 };
+                    draw_line(n.x, n.y, tip.x, tip.y, 1.8, string);
+                    draw_circle(n.x, n.y, 1.4, a(fletch));
+                }
             }
-            draw_circle(c.x, c.y, 4.0, color);
+            head
         }
         TowerKind::Cannon => {
-            draw_circle(c.x, c.y, TOWER_RADIUS, a(Color::new(0.30, 0.30, 0.34, 1.0)));
-            draw_circle_lines(
-                c.x,
-                c.y,
-                TOWER_RADIUS,
-                2.0,
-                a(Color::new(0.15, 0.15, 0.18, 1.0)),
+            draw_platform(
+                tower,
+                c,
+                Color::new(0.32, 0.32, 0.36, 1.0),
+                Color::new(0.15, 0.15, 0.18, 1.0),
+                time,
+                &a,
             );
-            for k in 0..6 {
-                let ang = k as f32 / 6.0 * std::f32::consts::TAU;
-                draw_circle(
-                    c.x + ang.cos() * 14.5,
-                    c.y + ang.sin() * 14.5,
-                    1.6,
-                    a(Color::new(0.6, 0.6, 0.65, 1.0)),
-                );
-            }
-            let tip = c + dir * (18.0 - recoil);
+            // The capybara gunner sits behind the cannon.
+            let head = draw_capybara(c - dir * 7.0 - side * 9.0, dir, 0.75, &a);
             let barrel = a(Color::new(0.20, 0.20, 0.22, 1.0));
-            draw_line(c.x, c.y, tip.x, tip.y, 11.0, barrel);
-            draw_circle(tip.x, tip.y, 6.5, barrel);
-            draw_circle(tip.x, tip.y, 3.5, a(BLACK));
+            let bore = if t0 >= 3 { 14.0 } else { 11.0 };
+            let barrels: &[f32] = if t1 >= 2 { &[-4.5, 4.5] } else { &[0.0] };
+            for &off in barrels {
+                let base = c + side * off;
+                let tip = base + dir * (18.0 - recoil);
+                let w = if barrels.len() > 1 { bore * 0.7 } else { bore };
+                draw_line(base.x, base.y, tip.x, tip.y, w, barrel);
+                draw_circle(tip.x, tip.y, w * 0.6, barrel);
+                draw_circle(tip.x, tip.y, w * 0.32, a(BLACK));
+                if t2 >= 1 {
+                    // Incendiary path: glowing muzzle.
+                    let glow = 0.5 + 0.5 * (time * 6.0).sin();
+                    draw_circle(
+                        tip.x,
+                        tip.y,
+                        w * 0.25,
+                        a(Color::new(1.0, 0.4 + 0.3 * glow, 0.1, 1.0)),
+                    );
+                }
+            }
             let band = c + dir * (9.0 - recoil * 0.5);
             draw_line(
-                band.x - side.x * 6.0,
-                band.y - side.y * 6.0,
-                band.x + side.x * 6.0,
-                band.y + side.y * 6.0,
+                band.x - side.x * 7.0,
+                band.y - side.y * 7.0,
+                band.x + side.x * 7.0,
+                band.y + side.y * 7.0,
                 2.0,
                 a(Color::new(0.65, 0.55, 0.3, 1.0)),
             );
-            draw_circle(c.x, c.y, 10.0, color);
-            draw_circle_lines(c.x, c.y, 10.0, 2.0, dark);
+            let hub = c + side * 2.0;
+            draw_circle(hub.x, hub.y, 6.0, color);
+            draw_circle_lines(hub.x, hub.y, 6.0, 2.0, dark);
             if tower.since_shot < 0.08 {
                 let flash = c + dir * 26.0;
                 draw_circle(flash.x, flash.y, 7.0, with_alpha(ORANGE, 0.8 * alpha));
                 draw_circle(flash.x, flash.y, 4.0, with_alpha(YELLOW, 0.9 * alpha));
             }
+            head
         }
         TowerKind::Frost => {
-            draw_circle(c.x, c.y, TOWER_RADIUS, a(Color::new(0.80, 0.90, 0.97, 1.0)));
-            draw_circle_lines(
+            // A capybara chilling in an icy pool, crystal floating above.
+            draw_platform(
+                tower,
+                c,
+                Color::new(0.80, 0.90, 0.97, 1.0),
+                Color::new(0.45, 0.65, 0.80, 1.0),
+                time,
+                &a,
+            );
+            draw_circle(
                 c.x,
                 c.y,
-                TOWER_RADIUS,
-                2.0,
-                a(Color::new(0.45, 0.65, 0.80, 1.0)),
+                TOWER_RADIUS - 5.0,
+                a(Color::new(0.55, 0.78, 0.95, 1.0)),
             );
-            let pulse = (time * 4.0 + c.x).sin();
-            let r = 10.0 + pulse;
-            draw_poly(c.x, c.y, 6, r, time * 40.0, color);
-            draw_poly_lines(c.x, c.y, 6, r, time * 40.0, 2.0, dark);
-            draw_circle(c.x, c.y, 3.5, a(WHITE));
-            // Shards orbiting the crystal.
-            for k in 0..3 {
-                let ang = time * 1.5 + k as f32 / 3.0 * std::f32::consts::TAU;
-                let s = c + vec2(ang.cos(), ang.sin()) * 14.0;
-                draw_poly(
-                    s.x,
-                    s.y,
-                    4,
-                    3.0,
-                    ang.to_degrees(),
-                    a(Color::new(0.85, 0.97, 1.0, 1.0)),
-                );
+            if t1 >= 1 {
+                // Blizzard path: swirling snow.
+                for k in 0..6 {
+                    let ang = time * 2.0 + k as f32;
+                    let q = c + vec2(ang.cos(), ang.sin())
+                        * (TOWER_RADIUS + 2.0 + (k % 2) as f32 * 3.0);
+                    draw_circle(q.x, q.y, 1.5, a(WHITE));
+                }
             }
+            if t2 >= 1 {
+                // Shatter path: icicles around the rim.
+                for k in 0..6 {
+                    let ang = k as f32 / 6.0 * std::f32::consts::TAU;
+                    let out = vec2(ang.cos(), ang.sin());
+                    let tan = vec2(-out.y, out.x);
+                    let b = c + out * (TOWER_RADIUS - 3.0);
+                    draw_triangle(
+                        b + tan * 2.5,
+                        b - tan * 2.5,
+                        b + out * (5.0 + t2 as f32),
+                        a(Color::new(0.85, 0.97, 1.0, 1.0)),
+                    );
+                }
+            }
+            let head = draw_capybara(c - dir * 2.0, dir, 0.75, &a);
+            let size = 6.0 + t0 as f32 * 1.5 + (time * 4.0 + c.x).sin();
+            let crystal = c + dir * 13.0;
+            draw_poly(crystal.x, crystal.y, 6, size, time * 40.0, color);
+            draw_poly_lines(crystal.x, crystal.y, 6, size, time * 40.0, 1.5, dark);
+            draw_circle(crystal.x, crystal.y, 2.0, a(WHITE));
             if tower.since_shot < 0.15 {
                 let k = tower.since_shot / 0.15;
                 draw_circle_lines(
@@ -1248,33 +1425,36 @@ fn draw_tower(tower: &Tower, c: Vec2, time: f32, alpha: f32, buffed: bool, t: &T
                     with_alpha(SKYBLUE, (1.0 - k) * alpha),
                 );
             }
+            // A yuzu on its head, the classic capybara spa look.
+            draw_circle(
+                head.x - dir.x * 1.5,
+                head.y - dir.y * 1.5,
+                2.6,
+                a(Color::new(1.0, 0.65, 0.1, 1.0)),
+            );
+            head
         }
         TowerKind::Sniper => {
-            draw_poly(
-                c.x,
-                c.y,
-                6,
-                TOWER_RADIUS,
-                0.0,
-                a(Color::new(0.35, 0.33, 0.40, 1.0)),
+            draw_platform(
+                tower,
+                c,
+                Color::new(0.62, 0.66, 0.55, 1.0),
+                Color::new(0.35, 0.40, 0.30, 1.0),
+                time,
+                &a,
             );
-            draw_poly_lines(
-                c.x,
-                c.y,
-                6,
-                TOWER_RADIUS,
-                0.0,
-                2.0,
-                a(Color::new(0.18, 0.17, 0.22, 1.0)),
-            );
-            let tip = c + dir * (28.0 - recoil);
-            draw_line(c.x, c.y, tip.x, tip.y, 6.0, dark);
+            // Capybara lying prone behind a long rifle.
+            let head = draw_capybara(c - dir * 7.0, dir, 0.8, &a);
+            let bore = if t0 >= 3 { 5.0 } else { 3.5 };
+            let start = c + dir * 1.0;
+            let tip = start + dir * (26.0 - recoil);
+            draw_line(start.x, start.y, tip.x, tip.y, bore + 2.0, dark);
             draw_line(
-                c.x,
-                c.y,
+                start.x,
+                start.y,
                 tip.x,
                 tip.y,
-                3.5,
+                bore,
                 a(Color::new(0.25, 0.25, 0.28, 1.0)),
             );
             draw_line(
@@ -1285,9 +1465,8 @@ fn draw_tower(tower: &Tower, c: Vec2, time: f32, alpha: f32, buffed: bool, t: &T
                 3.0,
                 a(Color::new(0.15, 0.15, 0.17, 1.0)),
             );
-            // Scope.
-            let s0 = c + dir * 3.0 + side * 5.0;
-            let s1 = c + dir * 13.0 + side * 5.0;
+            let s0 = start + dir * 3.0 + side * 4.0;
+            let s1 = start + dir * 12.0 + side * 4.0;
             draw_line(
                 s0.x,
                 s0.y,
@@ -1297,18 +1476,26 @@ fn draw_tower(tower: &Tower, c: Vec2, time: f32, alpha: f32, buffed: bool, t: &T
                 a(Color::new(0.1, 0.1, 0.12, 1.0)),
             );
             draw_circle(s1.x, s1.y, 1.8, a(Color::new(0.5, 0.8, 1.0, 1.0)));
-            draw_circle(c.x, c.y, 9.0, color);
-            draw_circle_lines(c.x, c.y, 9.0, 2.0, dark);
+            if t1 >= 2 {
+                // Fast firing path: an ammo belt.
+                for k in 0..4 {
+                    let q = c - side * 9.0 + dir * (k as f32 * 3.0 - 4.0);
+                    draw_rectangle(q.x - 1.2, q.y - 2.0, 2.4, 4.0, a(GOLD));
+                }
+            }
             if tower.since_shot < 0.06 {
-                let flash = c + dir * 32.0;
+                let flash = tip + dir * 4.0;
                 draw_circle(flash.x, flash.y, 5.0, with_alpha(YELLOW, 0.8 * alpha));
             }
+            head
         }
+    };
+    if top >= 4 {
+        draw_crown(head, dir, &a);
     }
 
     draw_tower_trim(tower, c, time, &a);
 
-    let top = tower.tiers.iter().copied().max().unwrap_or(0);
     if let Some(ring) = tier_color(top, time) {
         draw_circle_lines(c.x, c.y, TOWER_RADIUS + 2.0, 2.5, with_alpha(ring, alpha));
     }
@@ -1339,23 +1526,21 @@ fn draw_tower(tower: &Tower, c: Vec2, time: f32, alpha: f32, buffed: bool, t: &T
     }
 }
 
-/// A colonial rifleman seen from above. His gun changes with the upgrade
-/// path he's furthest along: musket/rifle, dual pistols or a light MG.
-fn draw_mercenary(tower: &Tower, c: Vec2, alpha: f32) {
-    let a = |col: Color| with_alpha(col, col.a * alpha);
+/// A capybara mercenary in a helmet and vest. Its gun changes with the
+/// upgrade path it's furthest along: rifle, dual pistols or a light MG.
+fn draw_mercenary(tower: &Tower, c: Vec2, a: &dyn Fn(Color) -> Color) -> Vec2 {
     let dir = vec2(tower.angle.cos(), tower.angle.sin());
     let side = vec2(-dir.y, dir.x);
     let recoil = (1.0 - tower.since_shot / 0.1).max(0.0) * 3.0;
     let line = |p: Vec2, q: Vec2, w: f32, col: Color| draw_line(p.x, p.y, q.x, q.y, w, a(col));
 
-    // Trampled dirt patch.
-    draw_circle(c.x, c.y, TOWER_RADIUS, a(Color::new(0.55, 0.45, 0.32, 1.0)));
-    draw_circle_lines(
-        c.x,
-        c.y,
-        TOWER_RADIUS,
-        2.0,
-        a(Color::new(0.38, 0.30, 0.20, 1.0)),
+    draw_platform(
+        tower,
+        c,
+        Color::new(0.78, 0.72, 0.55, 1.0),
+        Color::new(0.50, 0.44, 0.30, 1.0),
+        get_time() as f32,
+        a,
     );
 
     let [rifle, pistols, gunner] = tower.tiers;
@@ -1368,39 +1553,36 @@ fn draw_mercenary(tower: &Tower, c: Vec2, alpha: f32) {
     } else {
         0
     };
-    let coat = tower.kind.color();
     let metal = Color::new(0.20, 0.20, 0.22, 1.0);
     let wood = Color::new(0.45, 0.28, 0.14, 1.0);
-    let skin = Color::new(0.93, 0.78, 0.62, 1.0);
+    let paw = Color::new(0.45, 0.31, 0.19, 1.0);
 
-    // Shoulders and coat.
-    let back = c - dir * 2.0;
-    draw_circle(back.x, back.y, 8.0, a(coat));
+    let body = c - dir * 4.0;
+    let head = draw_capybara(body, dir, 0.9, a);
+    // Tactical vest straps across the back.
     for s in [-1.0, 1.0] {
-        let sh = back + side * s * 6.5;
-        draw_circle(sh.x, sh.y, 4.5, a(darken(coat, 0.85)));
+        let p0 = body + side * s * 3.5 - dir * 7.0;
+        let p1 = body + side * s * 3.5 + dir * 3.0;
+        line(p0, p1, 2.0, tower.kind.color());
     }
 
     let mut muzzles = Vec::new();
     match build {
         1 => {
-            // Dual-wielded pistols.
             for s in [-1.0, 1.0] {
-                let hand = c + side * s * 8.0 + dir * 5.0;
+                let hand = c + side * s * 8.0 + dir * 6.0;
                 let tip = hand + dir * (9.0 - recoil);
-                line(back + side * s * 6.5, hand, 3.0, darken(coat, 0.85));
                 line(hand - dir * 2.0, tip, 3.5, metal);
-                draw_circle(hand.x, hand.y, 2.2, a(skin));
+                draw_circle(hand.x, hand.y, 2.4, a(paw));
                 muzzles.push(tip);
             }
         }
         2 => {
-            // Light machine gun with an ammo box and bipod.
-            let base = c + side * 3.0 - dir * 4.0;
-            let tip = base + dir * (28.0 - recoil);
+            let base = c + side * 4.0 - dir * 2.0;
+            let tip = base + dir * (26.0 - recoil);
             line(base, base + dir * 10.0, 7.0, metal);
             line(base, tip, 4.0, metal);
-            let box_c = c - side * 7.0 + dir * 4.0;
+            let box_c = c - side * 9.0 + dir * 2.0;
             draw_rectangle(
                 box_c.x - 4.0,
                 box_c.y - 4.0,
@@ -1414,8 +1596,7 @@ fn draw_mercenary(tower: &Tower, c: Vec2, alpha: f32) {
             muzzles.push(tip);
         }
         _ => {
-            // Musket, becoming a scoped rifle on the rifle path.
-            let base = c + side * 4.0 - dir * 6.0;
+            let base = c + side * 5.0 - dir * 4.0;
             let tip = base + dir * (28.0 - recoil);
             line(base, base + dir * 12.0, 4.5, wood);
             line(base + dir * 8.0, tip, 2.5, metal);
@@ -1426,88 +1607,74 @@ fn draw_mercenary(tower: &Tower, c: Vec2, alpha: f32) {
             muzzles.push(tip);
         }
     }
-    // Arms reaching to the weapon (pistols draw their own).
     if build != 1 {
-        let grip = c + side * 4.0 + dir * 6.0;
-        line(back + side * 6.5, grip, 3.0, darken(coat, 0.85));
-        line(
-            back - side * 6.5,
-            grip - side * 2.0,
-            3.0,
-            darken(coat, 0.85),
-        );
-        draw_circle(grip.x, grip.y, 2.2, a(skin));
+        let grip = c + side * 5.0 + dir * 6.0;
+        draw_circle(grip.x, grip.y, 2.4, a(paw));
     }
 
-    // Tactical vest straps.
-    for s in [-1.0, 1.0] {
-        let p0 = back + side * s * 4.0 - dir * 5.0;
-        let p1 = back + side * s * 4.0 + dir * 5.0;
-        line(p0, p1, 1.5, Color::new(0.15, 0.15, 0.12, 1.0));
-    }
-    // Head with a combat helmet and goggles.
-    let head = c - dir * 1.0;
-    draw_circle(head.x, head.y, 5.5, a(skin));
+    // Combat helmet with goggles.
     draw_circle(
-        head.x - dir.x,
-        head.y - dir.y,
-        6.0,
+        head.x - dir.x * 1.5,
+        head.y - dir.y * 1.5,
+        5.2,
         a(Color::new(0.30, 0.34, 0.20, 1.0)),
     );
     draw_circle(
-        head.x - dir.x * 2.0,
-        head.y - dir.y * 2.0,
-        3.0,
+        head.x - dir.x * 2.5,
+        head.y - dir.y * 2.5,
+        2.6,
         a(Color::new(0.38, 0.42, 0.26, 1.0)),
     );
-    let g = head + dir * 4.0;
+    let g = head + dir * 1.5;
     line(
         g - side * 4.5,
         g + side * 4.5,
-        2.5,
+        2.2,
         Color::new(0.1, 0.1, 0.1, 1.0),
     );
     for s in [-2.2, 2.2] {
         let lens = g + side * s;
-        draw_circle(lens.x, lens.y, 1.4, a(Color::new(0.4, 0.8, 1.0, 1.0)));
+        draw_circle(lens.x, lens.y, 1.3, a(Color::new(0.4, 0.8, 1.0, 1.0)));
     }
 
     if tower.since_shot < 0.05 {
         for m in muzzles {
             let f = m + dir * 3.0;
-            draw_circle(f.x, f.y, 4.0, with_alpha(YELLOW, 0.85 * alpha));
+            draw_circle(f.x, f.y, 4.0, a(YELLOW));
         }
     }
+    head
 }
 
-fn draw_farm(tower: &Tower, c: Vec2, time: f32, alpha: f32) {
-    let a = |col: Color| with_alpha(col, col.a * alpha);
+fn draw_farm(tower: &Tower, c: Vec2, time: f32, a: &dyn Fn(Color) -> Color) -> Vec2 {
+    let [crops, bank, support] = tower.tiers;
     let soil = a(Color::new(0.45, 0.30, 0.18, 1.0));
     draw_rectangle(c.x - 18.0, c.y - 18.0, 36.0, 36.0, soil);
-    // Wheat rows swaying in the wind.
-    for row in 0..3 {
-        let y = c.y - 11.0 + row as f32 * 10.0;
+    // Crops path: the field fills up with more and taller wheat.
+    let rows = 3 + crops.min(2) as usize;
+    for row in 0..rows {
+        let y = c.y - 13.0 + row as f32 * (26.0 / rows as f32);
         for col in 0..5 {
             let x = c.x - 14.0 + col as f32 * 4.5;
             let sway = (time * 2.0 + x * 0.3).sin() * 1.2;
+            let h = 3.0 + crops as f32 * 0.6;
             draw_line(
                 x,
-                y + 3.0,
+                y + h,
                 x + sway,
-                y - 3.0,
+                y - h,
                 2.0,
                 a(Color::new(0.85, 0.75, 0.30, 1.0)),
             );
         }
     }
-    // Fence.
     let fence = a(Color::new(0.70, 0.55, 0.35, 1.0));
     draw_rectangle_lines(c.x - 18.0, c.y - 18.0, 36.0, 36.0, 2.0, fence);
     for k in 0..4 {
         let x = c.x - 18.0 + k as f32 * 12.0;
         draw_rectangle(x - 1.0, c.y + 15.0, 2.5, 5.0, fence);
     }
-    // Barn.
+    // Barn, which grows a silo at crops tier 3.
     let barn = a(Color::new(0.70, 0.20, 0.18, 1.0));
     draw_rectangle(c.x + 6.0, c.y - 2.0, 11.0, 12.0, barn);
     draw_triangle(
@@ -1523,14 +1690,15 @@ fn draw_farm(tower: &Tower, c: Vec2, time: f32, alpha: f32) {
         7.0,
         a(Color::new(0.95, 0.9, 0.85, 1.0)),
     );
-    // Bank path: a stack of coins. Support path: a banner.
-    if tower.tiers[1] > 0 {
-        for k in 0..tower.tiers[1] {
-            draw_circle(c.x - 12.0, c.y + 10.0 - k as f32 * 3.0, 4.0, a(GOLD));
-            draw_circle_lines(c.x - 12.0, c.y + 10.0 - k as f32 * 3.0, 4.0, 1.0, a(ORANGE));
-        }
+    if crops >= 3 {
+        draw_rectangle(c.x + 13.0, c.y - 16.0, 6.0, 14.0, a(LIGHTGRAY));
+        draw_circle(c.x + 16.0, c.y - 16.0, 3.0, a(GRAY));
     }
-    if tower.tiers[2] > 0 {
+    for k in 0..bank {
+        draw_circle(c.x - 12.0, c.y + 10.0 - k as f32 * 3.0, 4.0, a(GOLD));
+        draw_circle_lines(c.x - 12.0, c.y + 10.0 - k as f32 * 3.0, 4.0, 1.0, a(ORANGE));
+    }
+    if support > 0 {
         draw_line(
             c.x - 16.0,
             c.y - 16.0,
@@ -1547,6 +1715,30 @@ fn draw_farm(tower: &Tower, c: Vec2, time: f32, alpha: f32) {
             a(Color::new(0.15, 0.6, 0.25, 1.0)),
         );
     }
+    // The capybara farmer in a straw hat.
+    let dir = vec2(0.6, 0.8).normalize();
+    let farmer = c + vec2(-5.0, -3.0);
+    let head = draw_capybara(farmer, dir, 0.6, a);
+    draw_circle(
+        head.x - dir.x,
+        head.y - dir.y,
+        5.0,
+        a(Color::new(0.93, 0.82, 0.45, 1.0)),
+    );
+    draw_circle(
+        head.x - dir.x,
+        head.y - dir.y,
+        2.6,
+        a(Color::new(0.85, 0.72, 0.35, 1.0)),
+    );
+    draw_circle_lines(
+        head.x - dir.x,
+        head.y - dir.y,
+        2.6,
+        1.0,
+        a(Color::new(0.8, 0.2, 0.2, 1.0)),
+    );
+    head
 }
 
 // ---------------------------------------------------------------- units
@@ -1562,6 +1754,65 @@ fn quad(center: Vec2, dir: Vec2, half_len: f32, half_w: f32, color: Color) {
     draw_triangle(a, c, d, color);
 }
 
+/// A cat's head seen from above: ears, eyes, nose and whiskers.
+fn draw_cat_head(head: Vec2, dir: Vec2, r: f32, fur: Color, eyes: Color) {
+    let side = vec2(-dir.y, dir.x);
+    for s in [-1.0, 1.0] {
+        let base = head + side * s * r * 0.55 - dir * r * 0.1;
+        let tip = head + side * s * r * 0.95 - dir * r * 0.9;
+        draw_triangle(
+            base + dir * r * 0.35,
+            base - side * s * r * 0.35,
+            tip,
+            darken(fur, 0.85),
+        );
+        draw_triangle(
+            base + dir * r * 0.2,
+            base - side * s * r * 0.15,
+            base.lerp(tip, 0.7),
+            Color::new(0.95, 0.6, 0.65, 1.0),
+        );
+    }
+    draw_circle(head.x, head.y, r, fur);
+    for s in [-1.0, 1.0] {
+        let e = head + dir * r * 0.3 + side * s * r * 0.42;
+        draw_circle(e.x, e.y, r * 0.24, eyes);
+        draw_circle(e.x + dir.x * 0.5, e.y + dir.y * 0.5, r * 0.11, BLACK);
+        // Whiskers.
+        let m = head + dir * r * 0.7 + side * s * r * 0.3;
+        for k in [-1.0, 1.0] {
+            let w = m + side * s * r * 0.9 + dir * k * r * 0.25;
+            draw_line(m.x, m.y, w.x, w.y, 1.0, Color::new(1.0, 1.0, 1.0, 0.7));
+        }
+    }
+    let nose = head + dir * r * 0.78;
+    draw_circle(nose.x, nose.y, r * 0.14, Color::new(0.9, 0.45, 0.5, 1.0));
+}
+
+/// A swishing tail made of short segments.
+fn draw_tail(
+    from: Vec2,
+    dir: Vec2,
+    len: f32,
+    width: f32,
+    sway: f32,
+    color: Color,
+    tip: Option<Color>,
+) {
+    let side = vec2(-dir.y, dir.x);
+    let mut p = from;
+    let n = 6;
+    for k in 1..=n {
+        let t = k as f32 / n as f32;
+        let q = from - dir * len * t + side * (sway * t * t * 8.0);
+        draw_line(p.x, p.y, q.x, q.y, width * (1.0 - t * 0.4), color);
+        p = q;
+    }
+    if let Some(c) = tip {
+        draw_circle(p.x, p.y, width * 0.9, c);
+    }
+}
+
 fn draw_enemies(game: &Game) {
     let wps = &game.map.waypoints;
     for e in &game.enemies {
@@ -1572,140 +1823,192 @@ fn draw_enemies(game: &Game) {
         let moving = !(e.frozen() || e.stunned());
         let phase = game.time * (6.0 + e.kind.speed() / 15.0) + e.id as f32;
         let step = if moving { phase.sin() } else { 0.0 };
+        let sway = (game.time * 3.0 + e.id as f32).sin();
 
-        let mut color = e.kind.color();
+        let mut fur = e.kind.color();
         if e.slowed() {
-            color = Color::new(color.r * 0.5 + 0.2, color.g * 0.6 + 0.3, 1.0, 1.0);
+            fur = Color::new(fur.r * 0.6 + 0.15, fur.g * 0.7 + 0.2, 1.0, 1.0);
         }
         if e.stunned() {
-            color = Color::new(0.85, 0.85, 0.85, 1.0);
+            fur = darken(fur, 0.8);
         }
-        let flash = e.since_hit < 0.06;
-        let body = if flash { WHITE } else { color };
+        if e.since_hit < 0.06 {
+            fur = WHITE;
+        }
+        let dark = darken(fur, 0.6);
         let p = e.pos;
         draw_circle(p.x + 2.0, p.y + 3.0, r, with_alpha(BLACK, 0.25));
 
         match e.kind {
             EnemyKind::Grunt => {
-                // Little goblin: stomping feet, horns and big eyes.
+                // Orange tabby house cat.
+                draw_tail(p - dir * r * 0.9, dir, r * 1.3, 3.5, sway, fur, None);
                 for s in [-1.0, 1.0] {
-                    let foot = p + side * s * 5.5 + dir * (step * s * 3.5);
-                    draw_circle(foot.x, foot.y, 3.5, darken(color, 0.55));
-                }
-                draw_circle(p.x, p.y, r, body);
-                draw_circle(
-                    p.x - dir.x * 2.0,
-                    p.y - dir.y * 2.0,
-                    r * 0.6,
-                    darken(body, 1.1),
-                );
-                draw_circle_lines(p.x, p.y, r, 2.0, with_alpha(BLACK, 0.6));
-                for s in [-1.0, 1.0] {
-                    let base = p + side * s * r * 0.6 - dir * 2.0;
-                    draw_triangle(
-                        base + dir * 2.5,
-                        base - dir * 2.5,
-                        base + side * s * 6.0 - dir * 3.0,
-                        Color::new(0.95, 0.9, 0.75, 1.0),
-                    );
-                    let eye = p + dir * r * 0.45 + side * s * 3.6;
-                    draw_circle(eye.x, eye.y, 2.8, WHITE);
-                    draw_circle(eye.x + dir.x, eye.y + dir.y, 1.5, BLACK);
-                }
-            }
-            EnemyKind::Runner => {
-                // Arrowhead with speed streaks.
-                for k in [-1.0, 0.0, 1.0] {
-                    let from = p - dir * (r + 3.0) + side * k * 4.0;
-                    let len = 6.0 + (phase * 2.0 + k).sin().abs() * 6.0;
-                    let to = from - dir * len;
-                    draw_line(from.x, from.y, to.x, to.y, 1.5, with_alpha(color, 0.6));
-                }
-                let tip = p + dir * (r + 5.0);
-                let l = p - dir * r + side * (r + 1.0);
-                let rr = p - dir * r - side * (r + 1.0);
-                draw_triangle(tip, l, rr, body);
-                draw_triangle(p + dir * 2.0, l, rr, darken(body, 0.85));
-                draw_line(tip.x, tip.y, l.x, l.y, 1.5, with_alpha(BLACK, 0.6));
-                draw_line(tip.x, tip.y, rr.x, rr.y, 1.5, with_alpha(BLACK, 0.6));
-                let eye = p + dir * 3.0;
-                draw_circle(eye.x, eye.y, 2.5, WHITE);
-                draw_circle(eye.x + dir.x, eye.y + dir.y, 1.3, BLACK);
-            }
-            EnemyKind::Tank => {
-                // Armored hull on treads with a turret.
-                let tread = Color::new(0.18, 0.18, 0.2, 1.0);
-                for s in [-1.0, 1.0] {
-                    let c = p + side * s * (r - 1.0);
-                    quad(c, dir, r + 2.0, 4.0, tread);
-                    let roll = (game.time * e.speed() * 0.3) % 6.0;
-                    let mut d = -r + roll;
-                    while d < r {
-                        let m = c + dir * d;
-                        draw_line(
-                            m.x - side.x * 4.0,
-                            m.y - side.y * 4.0,
-                            m.x + side.x * 4.0,
-                            m.y + side.y * 4.0,
-                            1.0,
-                            GRAY,
-                        );
-                        d += 6.0;
+                    for (k, off) in [(1.0, 0.45), (-1.0, -0.55)] {
+                        let paw = p + side * s * r * 0.6 + dir * (r * off + step * s * k * 2.5);
+                        draw_circle(paw.x, paw.y, 2.8, WHITE);
                     }
                 }
-                quad(p, dir, r - 1.0, r - 4.0, body);
-                quad(p, dir, r - 3.0, r - 7.0, darken(body, 0.88));
-                let barrel = p + dir * (r + 7.0);
-                draw_line(p.x, p.y, barrel.x, barrel.y, 4.0, darken(body, 0.6));
-                draw_circle(p.x, p.y, r * 0.5, darken(body, 0.75));
-                draw_circle_lines(p.x, p.y, r * 0.5, 1.5, with_alpha(BLACK, 0.6));
-                for (a, b) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
-                    let q = p + dir * a * (r - 5.0) + side * b * (r - 8.0);
-                    draw_circle(q.x, q.y, 1.3, LIGHTGRAY);
+                let body = p - dir * r * 0.15;
+                draw_circle(body.x, body.y, r * 0.85, fur);
+                for k in [-0.5, 0.0, 0.5] {
+                    let c = body + dir * k * r * 0.7;
+                    draw_line(
+                        c.x - side.x * r * 0.6,
+                        c.y - side.y * r * 0.6,
+                        c.x + side.x * r * 0.6,
+                        c.y + side.y * r * 0.6,
+                        2.0,
+                        dark,
+                    );
+                }
+                draw_cat_head(
+                    p + dir * r * 0.75,
+                    dir,
+                    r * 0.62,
+                    fur,
+                    Color::new(0.5, 0.85, 0.4, 1.0),
+                );
+            }
+            EnemyKind::Runner => {
+                // Cheetah: long, spotted, built for speed.
+                for k in [-1.0, 0.0, 1.0] {
+                    let from = p - dir * (r + 10.0) + side * k * 4.0;
+                    let len = 6.0 + (phase * 2.0 + k).sin().abs() * 6.0;
+                    let to = from - dir * len;
+                    draw_line(from.x, from.y, to.x, to.y, 1.5, with_alpha(fur, 0.6));
+                }
+                draw_tail(
+                    p - dir * r * 1.1,
+                    dir,
+                    r * 1.6,
+                    2.5,
+                    sway * 0.5,
+                    fur,
+                    Some(BLACK),
+                );
+                for s in [-1.0, 1.0] {
+                    let paw = p + side * s * r * 0.55 + dir * step * s * 3.5;
+                    draw_circle(paw.x, paw.y, 2.2, darken(fur, 0.85));
+                }
+                for k in [-0.6, 0.0, 0.6] {
+                    let c = p + dir * k * r;
+                    draw_circle(c.x, c.y, r * 0.62, fur);
+                }
+                for (a, b) in [
+                    (-0.7, 0.3),
+                    (-0.3, -0.35),
+                    (0.1, 0.25),
+                    (0.45, -0.2),
+                    (-0.05, 0.0),
+                    (-0.9, -0.2),
+                ] {
+                    let c = p + dir * a * r + side * b * r;
+                    draw_circle(c.x, c.y, 1.4, BLACK);
+                }
+                draw_cat_head(
+                    p + dir * r * 1.05,
+                    dir,
+                    r * 0.55,
+                    fur,
+                    Color::new(0.95, 0.75, 0.2, 1.0),
+                );
+                // Tear marks.
+                for s in [-1.0, 1.0] {
+                    let a = p + dir * r * 1.2 + side * s * r * 0.2;
+                    let b = a + dir * r * 0.35 + side * s * r * 0.1;
+                    draw_line(a.x, a.y, b.x, b.y, 1.0, BLACK);
                 }
             }
+            EnemyKind::Tank => {
+                // Fluffy: a huge Persian puffball.
+                for k in 0..12 {
+                    let a = k as f32 / 12.0 * std::f32::consts::TAU + game.time * 0.4;
+                    let q = p + vec2(a.cos(), a.sin()) * r * 0.85;
+                    draw_circle(q.x, q.y, r * 0.38, darken(fur, 0.93));
+                }
+                draw_circle(p.x, p.y, r * 0.9, fur);
+                for k in 0..5 {
+                    let a = k as f32 * 1.3 + e.id as f32;
+                    let q = p + vec2(a.cos(), a.sin()) * r * 0.45;
+                    draw_circle(q.x, q.y, r * 0.22, WHITE);
+                }
+                draw_tail(
+                    p - dir * r * 0.8,
+                    dir,
+                    r * 0.7,
+                    6.0,
+                    sway * 0.3,
+                    darken(fur, 0.95),
+                    None,
+                );
+                // Flat, grumpy face.
+                let head = p + dir * r * 0.55;
+                draw_cat_head(head, dir, r * 0.45, fur, Color::new(0.95, 0.55, 0.15, 1.0));
+                let m = head + dir * r * 0.32;
+                draw_line(
+                    m.x - side.x * 3.0,
+                    m.y - side.y * 3.0,
+                    m.x + side.x * 3.0,
+                    m.y + side.y * 3.0,
+                    1.2,
+                    darken(fur, 0.5),
+                );
+            }
             EnemyKind::Boss => {
-                // Spiked brute with a crown and glowing eyes.
-                let spin = game.time * 0.6;
-                for k in 0..10 {
-                    let a = spin + k as f32 / 10.0 * std::f32::consts::TAU;
+                // Lion with a big mane and a crown.
+                draw_tail(
+                    p - dir * r * 0.8,
+                    dir,
+                    r * 1.2,
+                    4.0,
+                    sway,
+                    fur,
+                    Some(Color::new(0.45, 0.25, 0.1, 1.0)),
+                );
+                for s in [-1.0, 1.0] {
+                    for (k, off) in [(1.0, 0.3), (-1.0, -0.6)] {
+                        let paw = p + side * s * r * 0.65 + dir * (r * off + step * s * k * 3.0);
+                        draw_circle(paw.x, paw.y, 4.0, darken(fur, 0.9));
+                    }
+                }
+                let body = p - dir * r * 0.3;
+                draw_circle(body.x, body.y, r * 0.75, fur);
+                let head = p + dir * r * 0.45;
+                let mane = Color::new(0.65, 0.35, 0.12, 1.0);
+                for k in 0..14 {
+                    let a = k as f32 / 14.0 * std::f32::consts::TAU;
                     let out = vec2(a.cos(), a.sin());
                     let tan = vec2(-out.y, out.x);
                     draw_triangle(
-                        p + out * (r - 2.0) + tan * 4.0,
-                        p + out * (r - 2.0) - tan * 4.0,
-                        p + out * (r + 7.0),
-                        darken(body, 0.6),
+                        head + out * r * 0.45 + tan * 5.0,
+                        head + out * r * 0.45 - tan * 5.0,
+                        head + out * r * 0.85,
+                        if k % 2 == 0 { mane } else { darken(mane, 0.8) },
                     );
                 }
-                draw_circle(p.x, p.y, r, body);
-                draw_circle_lines(p.x, p.y, r, 3.0, BLACK);
-                draw_circle(
-                    p.x - dir.x * 3.0,
-                    p.y - dir.y * 3.0,
-                    r * 0.65,
-                    darken(body, 0.85),
+                draw_circle(head.x, head.y, r * 0.55, mane);
+                draw_cat_head(
+                    head + dir * 2.0,
+                    dir,
+                    r * 0.42,
+                    fur,
+                    Color::new(1.0, 0.85, 0.2, 1.0),
                 );
-                let crown = p - dir * 5.0;
+                let crown = head - dir * r * 0.35;
                 let gold = Color::new(1.0, 0.8, 0.2, 1.0);
-                for k in 0..5 {
-                    let a = k as f32 / 5.0 * std::f32::consts::TAU + game.time * 0.3;
-                    let out = vec2(a.cos(), a.sin());
-                    draw_triangle(
-                        crown + out * 5.0 + vec2(-out.y, out.x) * 3.0,
-                        crown + out * 5.0 - vec2(-out.y, out.x) * 3.0,
-                        crown + out * 10.0,
-                        gold,
-                    );
+                for k in [-1.0, 0.0, 1.0] {
+                    let b = crown + side * k * 4.0;
+                    draw_triangle(b - side * 2.5, b + side * 2.5, b - dir * 6.0, gold);
                 }
-                draw_circle(crown.x, crown.y, 6.0, gold);
-                draw_circle(crown.x, crown.y, 2.5, Color::new(0.3, 0.6, 1.0, 1.0));
-                let glow = 0.7 + 0.3 * (game.time * 6.0).sin();
-                for s in [-1.0, 1.0] {
-                    let eye = p + dir * r * 0.5 + side * s * 7.0;
-                    draw_circle(eye.x, eye.y, 5.0, Color::new(1.0, 0.9, 0.2, 0.3 * glow));
-                    draw_circle(eye.x, eye.y, 3.0, Color::new(1.0, 0.95, 0.4, glow));
-                }
+                draw_line(
+                    crown.x - side.x * 6.5,
+                    crown.y - side.y * 6.5,
+                    crown.x + side.x * 6.5,
+                    crown.y + side.y * 6.5,
+                    3.0,
+                    gold,
+                );
             }
         }
         if e.frozen() {
@@ -1774,7 +2077,7 @@ fn draw_enemies(game: &Game) {
             draw_rectangle(x, y, w * frac, h, bar);
             if boss {
                 text_centered(
-                    "BOSS",
+                    "LION",
                     vec2(p.x, y - 8.0),
                     14,
                     Color::new(1.0, 0.85, 0.3, 1.0),
@@ -2032,7 +2335,7 @@ fn draw_sidebar(game: &Game, t: &Theme) {
     button(ui::auto_button(), auto_label, true, auto_color, t);
 }
 
-fn tower_card(r: Rect, kind: TowerKind, number: usize, affordable: bool, t: &Theme) {
+fn tower_card(r: Rect, kind: TowerKind, number: usize, cost: u32, affordable: bool, t: &Theme) {
     let icon = vec2(r.x + 26.0, r.y + r.h / 2.0);
     draw_circle(icon.x, icon.y, 15.0, kind.color());
     draw_circle_lines(icon.x, icon.y, 15.0, 2.0, BLACK);
@@ -2053,7 +2356,7 @@ fn tower_card(r: Rect, kind: TowerKind, number: usize, affordable: bool, t: &The
     }
     let cost_color = if affordable { t.gold } else { t.bad };
     text_right(
-        &format!("{}g", kind.cost()),
+        &format!("{cost}g"),
         r.x + r.w - 10.0,
         r.y + 22.0,
         22,
@@ -2077,7 +2380,8 @@ fn draw_build_panel(game: &Game, t: &Theme) {
         };
         let border = if chosen { t.text } else { t.border };
         panel_rect(r, fill, border);
-        tower_card(r, kind, i + 1, game.can_afford(kind.cost()), t);
+        let cost = game.tower_cost(kind);
+        tower_card(r, kind, i + 1, cost, game.can_afford(cost), t);
     }
 
     if game.build_choice.is_some() {
@@ -2101,7 +2405,7 @@ fn draw_build_panel(game: &Game, t: &Theme) {
             t.text_dim,
         );
         for (i, kind) in ui::SANDBOX_SPAWNS.into_iter().enumerate() {
-            let name = format!("+ {kind:?}");
+            let name = format!("+ {}", kind.name());
             button(
                 ui::sandbox_spawn_button(i),
                 &name,
@@ -2289,7 +2593,8 @@ fn draw_tower_panel(game: &Game, index: usize, t: &Theme) {
         let tier = tower.tiers[path];
         let next = tower.next_upgrade(path);
         let open = tower.path_open(path);
-        let affordable = tower.upgrade_cost(path).is_some_and(|c| game.can_afford(c));
+        let price = game.upgrade_price(tower, path);
+        let affordable = price.is_some_and(|c| game.can_afford(c));
         let hover = r.contains(mouse());
         let fill = if open && affordable && hover {
             t.panel_hover
@@ -2316,7 +2621,8 @@ fn draw_tower_panel(game: &Game, index: usize, t: &Theme) {
                 draw_text(u.desc, r.x + 10.0, r.y + 64.0, 16.0, t.text_dim);
                 if open {
                     let c = if affordable { t.gold } else { t.bad };
-                    text_right(&format!("{}g", u.cost), r.x + r.w - 10.0, r.y + 78.0, 20, c);
+                    let cost = price.unwrap_or(u.cost);
+                    text_right(&format!("{cost}g"), r.x + r.w - 10.0, r.y + 78.0, 20, c);
                 } else {
                     text_right("Locked", r.x + r.w - 10.0, r.y + 78.0, 18, t.bad);
                 }
@@ -2324,9 +2630,12 @@ fn draw_tower_panel(game: &Game, index: usize, t: &Theme) {
         }
     }
 
+    if let Some(path) = (0..PATHS).find(|&p| ui::path_card(p).contains(mouse())) {
+        draw_upgrade_tooltip(game, tower, path, t);
+    }
     button(
         ui::sell_button(),
-        &format!("Sell for {}g (S)", tower.sell_value()),
+        &format!("Sell for {}g (S)", game.sell_value(tower)),
         true,
         RED_BTN,
         t,
@@ -2351,6 +2660,198 @@ fn draw_tower_panel(game: &Game, index: usize, t: &Theme) {
     }
 }
 
+/// Lines like "Damage 13 -> 19" for every stat an upgrade changes.
+fn stat_changes(before: &Stats, after: &Stats) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut num = |label: &str, b: f32, a: f32, prec: usize, unit: &str| {
+        if (b - a).abs() > 1e-3 {
+            out.push(format!("{label}  {b:.prec$}{unit} -> {a:.prec$}{unit}"));
+        }
+    };
+    num("Damage", before.damage, after.damage, 0, "");
+    num(
+        "Attacks/s",
+        1.0 / before.cooldown,
+        1.0 / after.cooldown,
+        2,
+        "",
+    );
+    if before.range.is_finite() {
+        num(
+            "Range",
+            before.range / TILE,
+            after.range / TILE,
+            1,
+            " tiles",
+        );
+    }
+    num(
+        "Splash",
+        before.splash / TILE,
+        after.splash / TILE,
+        1,
+        " tiles",
+    );
+    num(
+        "Pierce",
+        before.pierce / TILE,
+        after.pierce / TILE,
+        0,
+        " tiles",
+    );
+    num("Arrows", before.arrows as f32, after.arrows as f32, 0, "");
+    num(
+        "Targets",
+        before.targets as f32,
+        after.targets as f32,
+        0,
+        "",
+    );
+    num(
+        "Shoots through",
+        before.penetrate as f32,
+        after.penetrate as f32,
+        0,
+        "",
+    );
+    num(
+        "Bounces",
+        before.bounces as f32,
+        after.bounces as f32,
+        0,
+        "",
+    );
+    num("Freeze", before.freeze_time, after.freeze_time, 1, "s");
+    num(
+        "Slow",
+        (1.0 - before.slow) * 100.0,
+        (1.0 - after.slow) * 100.0,
+        0,
+        "%",
+    );
+    num("Slow time", before.slow_time, after.slow_time, 1, "s");
+    num(
+        "Brittle",
+        before.brittle * 100.0,
+        after.brittle * 100.0,
+        0,
+        "%",
+    );
+    num("Burn", before.burn_dps, after.burn_dps, 0, "/s");
+    num("Burn time", before.burn_time, after.burn_time, 0, "s");
+    num("Stun", before.stun_time, after.stun_time, 1, "s");
+    num("vs bosses", before.boss_mult, after.boss_mult, 1, "x");
+    num(
+        "vs tanks/bosses",
+        before.heavy_mult,
+        after.heavy_mult,
+        2,
+        "x",
+    );
+    num(
+        "Income",
+        before.income as f32,
+        after.income as f32,
+        0,
+        "g/wave",
+    );
+    num(
+        "Interest",
+        before.interest * 100.0,
+        after.interest * 100.0,
+        0,
+        "%",
+    );
+    num(
+        "Interest cap",
+        before.interest_cap as f32,
+        after.interest_cap as f32,
+        0,
+        "g",
+    );
+    num(
+        "Buff reach",
+        before.buff_radius / TILE,
+        after.buff_radius / TILE,
+        1,
+        " tiles",
+    );
+    num(
+        "Speed buff",
+        before.buff_speed * 100.0,
+        after.buff_speed * 100.0,
+        0,
+        "%",
+    );
+    num(
+        "Range buff",
+        before.buff_range * 100.0,
+        after.buff_range * 100.0,
+        0,
+        "%",
+    );
+    num(
+        "Damage buff",
+        before.buff_damage * 100.0,
+        after.buff_damage * 100.0,
+        0,
+        "%",
+    );
+    out
+}
+
+/// Detail card shown beside the sidebar while hovering an upgrade.
+fn draw_upgrade_tooltip(game: &Game, tower: &Tower, path: usize, t: &Theme) {
+    let Some(upgrade) = tower.next_upgrade(path) else {
+        return;
+    };
+    let mut next = tower.tiers;
+    next[path] += 1;
+    let before = game.with_perks(tower.kind.stats(tower.tiers));
+    let after = game.with_perks(tower.kind.stats(next));
+    let changes = stat_changes(&before, &after);
+    let card = ui::path_card(path);
+    let h =
+        70.0 + changes.len().max(1) as f32 * 20.0 + if tower.path_open(path) { 0.0 } else { 22.0 };
+    let r = Rect::new(SIDEBAR_X - 290.0, card.y.min(SCREEN_H - h - 10.0), 280.0, h);
+    panel_rect(r, with_alpha(t.panel, 0.97), t.border);
+    rounded(Rect::new(r.x, r.y, 6.0, r.h), 3.0, PATH_COLORS[path]);
+    draw_text(
+        format!("Tier {}: {}", tower.tiers[path] + 1, upgrade.name),
+        r.x + 16.0,
+        r.y + 24.0,
+        22.0,
+        t.text,
+    );
+    let price = game.upgrade_price(tower, path).unwrap_or(upgrade.cost);
+    text_right(
+        &format!("{price}g"),
+        r.x + r.w - 12.0,
+        r.y + 24.0,
+        20,
+        t.gold,
+    );
+    draw_text(upgrade.desc, r.x + 16.0, r.y + 46.0, 16.0, t.text_dim);
+    let mut y = r.y + 70.0;
+    if changes.is_empty() {
+        draw_text("No stat changes", r.x + 16.0, y, 17.0, t.text_dim);
+    }
+    for line in &changes {
+        draw_circle(r.x + 20.0, y - 5.0, 3.0, PATH_COLORS[path]);
+        draw_text(line, r.x + 30.0, y, 17.0, t.text);
+        y += 20.0;
+    }
+    if !tower.path_open(path) {
+        draw_text(
+            "Locked: max 2 paths, 1 past tier 2",
+            r.x + 16.0,
+            r.y + r.h - 10.0,
+            15.0,
+            t.bad,
+        );
+    }
+}
+
 fn draw_tier_pips(r: Rect, tier: u8, t: &Theme) {
     for i in 0..TIERS {
         let px = r.x + r.w - 14.0 - (TIERS - 1 - i) as f32 * 14.0;
@@ -2361,6 +2862,17 @@ fn draw_tier_pips(r: Rect, tier: u8, t: &Theme) {
         };
         draw_rectangle(px - 5.0, r.y + 8.0, 10.0, 10.0, c);
     }
+}
+
+fn draw_xp_toast(game: &Game) {
+    let Some((text, life)) = &game.xp_toast else {
+        return;
+    };
+    let a = life.min(1.0);
+    let w = measure_text(text, None, 22, 1.0).width + 24.0;
+    let r = Rect::new(MAP_X + MAP_W - w - 10.0, MAP_Y + MAP_H - 40.0, w, 30.0);
+    rounded(r, 8.0, Color::new(0.15, 0.35, 0.7, 0.85 * a));
+    text_centered(text, r.center(), 22, with_alpha(WHITE, a));
 }
 
 fn draw_message(game: &Game) {
@@ -2768,7 +3280,7 @@ fn section_header(text: &str, x: f32, y: f32, width: f32, t: &Theme) {
     draw_line(x + w + 12.0, y - 7.0, x + width, y - 7.0, 1.0, t.border);
 }
 
-pub fn draw_lobby(lobby: &Lobby, game: &Game) {
+pub fn draw_lobby(lobby: &Lobby, game: &Game, profile: &Profile) {
     let t = theme(game);
     let time = get_time() as f32;
     clear_background(t.panel);
@@ -2924,6 +3436,17 @@ pub fn draw_lobby(lobby: &Lobby, game: &Game) {
     );
     button(ui::lobby_join(), "Join party", !lobby.busy, BLUE, t);
 
+    let skills_label = if profile.points_free() > 0 {
+        format!("Skills ({} pts)", profile.points_free())
+    } else {
+        "Skills".to_string()
+    };
+    let skills_color = if profile.points_free() > 0 {
+        GREEN_BTN
+    } else {
+        BLUE
+    };
+    button(ui::lobby_skills(), &skills_label, true, skills_color, t);
     button(ui::lobby_settings(), "Settings", true, GREY_BTN, t);
     button(ui::lobby_quit(), "Quit", true, RED_BTN, t);
 
@@ -2933,5 +3456,231 @@ pub fn draw_lobby(lobby: &Lobby, game: &Game) {
         .unwrap_or("Enter starts a game. Friends join with your IP address.");
     text_centered(status, vec2(p.center().x, p.y + p.h - 14.0), 18, t.text_dim);
 
+    draw_profile_card(profile, t);
+    if game.menu == Some(Menu::Skills) {
+        draw_skill_tree(profile, t);
+    }
     draw_menus(game, false, t);
+}
+
+/// XP bar with a label, e.g. "340 / 420 XP".
+fn draw_xp_bar(r: Rect, have: u32, need: u32, t: &Theme) {
+    rounded(r, r.h / 2.0, with_alpha(t.text, 0.15));
+    let frac = (have as f32 / need.max(1) as f32).clamp(0.0, 1.0);
+    if frac > 0.02 {
+        rounded(
+            Rect::new(r.x, r.y, r.w * frac, r.h),
+            r.h / 2.0,
+            Color::new(0.35, 0.65, 1.0, 1.0),
+        );
+    }
+    text_centered(&format!("{have} / {need} XP"), r.center(), 14, t.text);
+}
+
+fn draw_profile_card(profile: &Profile, t: &Theme) {
+    let r = ui::lobby_profile();
+    let (level, have, need) = profile.level_progress();
+    panel_rect(r, with_alpha(t.panel, 0.95), t.border);
+    // Level medal.
+    let medal = vec2(r.x + 34.0, r.y + 36.0);
+    draw_circle(medal.x, medal.y, 24.0, Color::new(0.85, 0.66, 0.22, 1.0));
+    draw_circle(medal.x, medal.y, 19.0, Color::new(1.0, 0.82, 0.35, 1.0));
+    text_centered(
+        &level.to_string(),
+        medal,
+        26,
+        Color::new(0.35, 0.22, 0.0, 1.0),
+    );
+    draw_text("Level", r.x + 66.0, r.y + 24.0, 18.0, t.text_dim);
+    draw_text(level.to_string(), r.x + 112.0, r.y + 25.0, 22.0, t.text);
+    let pts = profile.points_free();
+    if pts > 0 {
+        draw_text(
+            format!("{pts} skill pt{}", if pts == 1 { "" } else { "s" }),
+            r.x + 66.0,
+            r.y + 44.0,
+            16.0,
+            Color::new(0.2, 0.6, 0.25, 1.0),
+        );
+    } else {
+        draw_text("Click for skills", r.x + 66.0, r.y + 44.0, 16.0, t.text_dim);
+    }
+    draw_xp_bar(
+        Rect::new(r.x + 66.0, r.y + 54.0, r.w - 78.0, 14.0),
+        have,
+        need,
+        t,
+    );
+}
+
+/// Splits text into lines that fit `width` at `size`.
+fn wrap(text: &str, width: f32, size: u16) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        let candidate = if line.is_empty() {
+            word.to_string()
+        } else {
+            format!("{line} {word}")
+        };
+        if measure_text(&candidate, None, size, 1.0).width > width && !line.is_empty() {
+            lines.push(std::mem::replace(&mut line, word.to_string()));
+        } else {
+            line = candidate;
+        }
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+fn draw_skill_tree(profile: &Profile, t: &Theme) {
+    dim_screen();
+    let p = ui::skills_panel();
+    panel_rect(p, t.panel, t.border);
+    draw_text("Skill tree", p.x + 20.0, p.y + 40.0, 34.0, t.text);
+    let (level, have, need) = profile.level_progress();
+    draw_text(
+        format!("Level {level}"),
+        p.x + 220.0,
+        p.y + 38.0,
+        26.0,
+        t.gold,
+    );
+    draw_xp_bar(
+        Rect::new(p.x + 330.0, p.y + 22.0, 260.0, 18.0),
+        have,
+        need,
+        t,
+    );
+    let pts = profile.points_free();
+    let pts_color = if pts > 0 {
+        Color::new(0.2, 0.6, 0.25, 1.0)
+    } else {
+        t.text_dim
+    };
+    draw_text(
+        format!("{pts} skill points to spend"),
+        p.x + 610.0,
+        p.y + 38.0,
+        22.0,
+        pts_color,
+    );
+    button(ui::skills_close(), "x", true, GREY_BTN, t);
+    draw_text(
+        "Earn XP by clearing waves (harder maps give more). Every level gives 1 point. Tier 1 skills cost 1, tier 2 skills cost 2 and need their tier 1 first.",
+        p.x + 20.0,
+        p.y + 72.0,
+        16.0,
+        t.text_dim,
+    );
+
+    for (b, name) in BRANCHES.iter().enumerate() {
+        let x = ui::skill_node(b).x;
+        draw_text(*name, x + 4.0, p.y + 124.0, 22.0, t.text);
+        draw_line(x, p.y + 130.0, x + 212.0, p.y + 130.0, 1.0, t.border);
+    }
+
+    // Connectors from each tier 1 skill to its children.
+    for s in SKILLS.iter().filter(|s| s.parent.is_some()) {
+        let parent = ui::skill_node(s.parent.unwrap_or(0));
+        let child = ui::skill_node(s.id);
+        let x = parent.x + 14.0;
+        let lit = profile.has(s.parent.unwrap_or(0));
+        let c = if lit {
+            Color::new(0.3, 0.7, 0.35, 1.0)
+        } else {
+            with_alpha(t.text, 0.25)
+        };
+        draw_line(x, parent.y + parent.h, x, child.center().y, 3.0, c);
+        draw_line(x, child.center().y, child.x, child.center().y, 3.0, c);
+    }
+
+    for s in SKILLS.iter() {
+        let r = ui::skill_node(s.id);
+        let owned = profile.has(s.id);
+        let available = profile.can_unlock(s.id);
+        let parent_ok = s.parent.is_none_or(|p| profile.has(p));
+        let r = if s.parent.is_some() {
+            Rect::new(r.x + 28.0, r.y, r.w - 28.0, r.h)
+        } else {
+            r
+        };
+        let fill = if owned {
+            Color::new(0.24, 0.55, 0.30, 1.0)
+        } else if available && r.contains(mouse()) {
+            t.panel_hover
+        } else {
+            t.panel_light
+        };
+        panel_rect(
+            r,
+            fill,
+            if available {
+                Color::new(0.3, 0.55, 0.95, 1.0)
+            } else {
+                t.border
+            },
+        );
+        let text = if owned {
+            WHITE
+        } else if parent_ok {
+            t.text
+        } else {
+            t.text_dim
+        };
+        draw_text(
+            format!("Tier {}", s.tier + 1),
+            r.x + 10.0,
+            r.y + 18.0,
+            15.0,
+            if owned { WHITE } else { t.text_dim },
+        );
+        draw_text(s.name, r.x + 10.0, r.y + 40.0, 22.0, text);
+        for (k, line) in wrap(s.desc, r.w - 20.0, 16).iter().enumerate() {
+            draw_text(line, r.x + 10.0, r.y + 60.0 + k as f32 * 16.0, 16.0, text);
+        }
+        let status = if owned {
+            "Unlocked".to_string()
+        } else if !parent_ok {
+            "Needs tier 1".to_string()
+        } else {
+            let c = s.cost();
+            format!("{c} pt{}", if c == 1 { "" } else { "s" })
+        };
+        let status_color = if owned {
+            WHITE
+        } else if available {
+            Color::new(0.2, 0.6, 0.25, 1.0)
+        } else {
+            t.bad
+        };
+        text_right(&status, r.x + r.w - 10.0, r.y + 18.0, 15, status_color);
+        if owned {
+            // Check mark.
+            let c = vec2(r.x + r.w - 20.0, r.y + r.h - 20.0);
+            draw_line(c.x - 7.0, c.y, c.x - 2.0, c.y + 5.0, 3.0, WHITE);
+            draw_line(c.x - 2.0, c.y + 5.0, c.x + 7.0, c.y - 6.0, 3.0, WHITE);
+        }
+    }
+
+    button(
+        ui::skills_reset(),
+        "Refund all points",
+        !profile.unlocked.is_empty(),
+        RED_BTN,
+        t,
+    );
+    text_right(
+        &format!(
+            "{} of {} points spent",
+            profile.points_spent(),
+            profile.points_total()
+        ),
+        p.x + p.w - 20.0,
+        p.y + p.h - 30.0,
+        18,
+        t.text_dim,
+    );
 }

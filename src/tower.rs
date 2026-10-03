@@ -179,12 +179,12 @@ impl TowerKind {
 
     pub fn description(self) -> &'static str {
         match self {
-            Self::Arrow => "Pierces 2 tiles behind",
-            Self::Mercenary => "Gun for hire, 3 builds",
-            Self::Cannon => "Slow, splash damage",
-            Self::Frost => "Freezes all in range",
-            Self::Sniper => "Global range, big hits",
-            Self::Farm => "Earns gold every wave",
+            Self::Arrow => "Capy archer, piercing bolts",
+            Self::Mercenary => "Capy gun for hire",
+            Self::Cannon => "Capy cannon, big splash",
+            Self::Frost => "Spa capy, freezes all",
+            Self::Sniper => "Capy sniper, global range",
+            Self::Farm => "Capy farmer, earns gold",
         }
     }
 
@@ -708,10 +708,6 @@ impl Tower {
             return None;
         }
         self.next_upgrade(path).map(|u| u.cost)
-    }
-
-    pub fn sell_value(&self) -> u32 {
-        (self.invested as f32 * SELL_RATIO) as u32
     }
 
     /// Upgrade summary such as "2-0-1".

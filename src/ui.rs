@@ -243,14 +243,60 @@ pub fn lobby_join() -> Rect {
     Rect::new(p.x + 630.0, p.y + 428.0, 150.0, 44.0)
 }
 
+pub fn lobby_skills() -> Rect {
+    let p = lobby_panel();
+    Rect::new(p.x + 20.0, p.y + 492.0, 246.0, 40.0)
+}
+
 pub fn lobby_settings() -> Rect {
     let p = lobby_panel();
-    Rect::new(p.x + 20.0, p.y + 492.0, 370.0, 40.0)
+    Rect::new(p.x + 277.0, p.y + 492.0, 246.0, 40.0)
 }
 
 pub fn lobby_quit() -> Rect {
     let p = lobby_panel();
-    Rect::new(p.x + 410.0, p.y + 492.0, 370.0, 40.0)
+    Rect::new(p.x + 534.0, p.y + 492.0, 246.0, 40.0)
+}
+
+/// Level badge in the top left of the main menu (also opens the skill tree).
+pub fn lobby_profile() -> Rect {
+    Rect::new(16.0, 16.0, 220.0, 78.0)
+}
+
+// Skill tree.
+
+pub fn skills_panel() -> Rect {
+    Rect::new(40.0, 40.0, SCREEN_W - 80.0, SCREEN_H - 80.0)
+}
+
+pub fn skills_close() -> Rect {
+    let p = skills_panel();
+    Rect::new(p.x + p.w - 44.0, p.y + 12.0, 32.0, 32.0)
+}
+
+pub fn skills_reset() -> Rect {
+    let p = skills_panel();
+    Rect::new(p.x + 20.0, p.y + p.h - 56.0, 210.0, 40.0)
+}
+
+/// Each branch is a column: its tier 1 skill on top, the two tier 2 skills
+/// it unlocks below.
+pub fn skill_node(id: usize) -> Rect {
+    use crate::profile::SKILLS;
+    let p = skills_panel();
+    let skill = &SKILLS[id];
+    let branch = skill.parent.unwrap_or(id);
+    let x = p.x + 20.0 + branch as f32 * 226.0;
+    match skill.parent {
+        None => Rect::new(x, p.y + 140.0, 212.0, 100.0),
+        Some(parent) => {
+            let k = SKILLS[parent]
+                .children()
+                .position(|c| c.id == id)
+                .unwrap_or(0);
+            Rect::new(x, p.y + 300.0 + k as f32 * 130.0, 212.0, 110.0)
+        }
+    }
 }
 
 /// Main menu state.
@@ -296,7 +342,15 @@ fn shift() -> bool {
     is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift)
 }
 
-pub fn handle_lobby(lobby: &mut Lobby, game: &mut Game) -> Option<LobbyAction> {
+pub fn handle_lobby(
+    lobby: &mut Lobby,
+    game: &mut Game,
+    profile: &mut crate::profile::Profile,
+) -> Option<LobbyAction> {
+    if game.menu == Some(Menu::Skills) {
+        handle_skills(game, profile);
+        return None;
+    }
     if game.menu.is_some() {
         handle_menu(game, false);
         return None;
@@ -345,6 +399,9 @@ pub fn handle_lobby(lobby: &mut Lobby, game: &mut Game) -> Option<LobbyAction> {
     }
     if lobby_settings().contains(mouse) {
         game.menu = Some(Menu::Settings);
+    }
+    if lobby_skills().contains(mouse) || lobby_profile().contains(mouse) {
+        game.menu = Some(Menu::Skills);
     }
     if lobby_quit().contains(mouse) {
         return Some(LobbyAction::Quit);
@@ -456,7 +513,7 @@ pub fn handle_input(game: &mut Game) {
 
     if in_map(mouse, 0.0) {
         if let Some(kind) = game.build_choice {
-            if game.can_place(mouse) && game.can_afford(kind.cost()) {
+            if game.can_place(mouse) && game.can_afford(game.tower_cost(kind)) {
                 game.act(Action::Place { kind, pos: mouse });
                 // Hold shift to keep placing the same tower.
                 if !shift() {
@@ -602,7 +659,30 @@ pub fn handle_menu(game: &mut Game, in_game: bool) {
                 }
             }
         }
+        Some(Menu::Skills) => game.menu = None,
         None => {}
+    }
+}
+
+fn handle_skills(game: &mut Game, profile: &mut crate::profile::Profile) {
+    if is_key_pressed(KeyCode::Escape) {
+        game.menu = None;
+        return;
+    }
+    if !is_mouse_button_pressed(MouseButton::Left) {
+        return;
+    }
+    let mouse: Vec2 = mouse_position().into();
+    if skills_close().contains(mouse) {
+        game.menu = None;
+    } else if skills_reset().contains(mouse) {
+        profile.reset_skills();
+    } else if let Some(skill) = crate::profile::SKILLS
+        .iter()
+        .find(|s| skill_node(s.id).contains(mouse))
+        && profile.unlock(skill.id)
+    {
+        game.sounds.push(crate::audio::Sfx::Upgrade);
     }
 }
 

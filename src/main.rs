@@ -6,6 +6,7 @@ mod enemy;
 mod game;
 mod map;
 mod net;
+mod profile;
 mod render;
 mod tower;
 mod ui;
@@ -63,6 +64,10 @@ struct App {
     snapshot_timer: f32,
     /// This machine's LAN address, shown to the host so friends can join.
     host_ip: String,
+    profile: profile::Profile,
+    /// Highest wave XP has been given for in the current game.
+    xp_wave: u32,
+    victory_awarded: bool,
 }
 
 impl App {
@@ -86,14 +91,14 @@ impl App {
     }
 
     fn update_menu(&mut self) {
-        let a = ui::handle_lobby(&mut self.lobby, &mut self.game);
+        let a = ui::handle_lobby(&mut self.lobby, &mut self.game, &mut self.profile);
         self.update_menu_with(a);
     }
 
     fn update_menu_with(&mut self, action: Option<LobbyAction>) {
         match action {
             Some(LobbyAction::Play) => {
-                self.game.restart(self.lobby.map, self.lobby.sandbox);
+                self.start_game();
                 self.role = Role::Offline;
                 self.screen = Screen::Playing;
             }
@@ -101,7 +106,7 @@ impl App {
                 Ok(host) => {
                     self.host_ip = net::local_ip()
                         .map_or("this computer's IP".to_string(), |ip| ip.to_string());
-                    self.game.restart(self.lobby.map, self.lobby.sandbox);
+                    self.start_game();
                     self.game.online = true;
                     self.role = Role::Host(host);
                     self.screen = Screen::Playing;
@@ -161,24 +166,6 @@ impl App {
                                 self.lobby.busy = false;
                                 self.lobby.status = None;
                                 self.game.notify("Joined the party");
-                                if std::env::var("MP").as_deref() == Ok("client") {
-                                    let want = vec2(700.0, 300.0);
-                                    let mut best = want;
-                                    let mut bd = f32::MAX;
-                                    for i in -25..25 {
-                                        for j in -25..25 {
-                                            let p = want + vec2(i as f32 * 4.0, j as f32 * 4.0);
-                                            if p.distance(want) < bd && self.game.can_place(p) {
-                                                bd = p.distance(want);
-                                                best = p;
-                                            }
-                                        }
-                                    }
-                                    self.game.act(game::Action::Place {
-                                        kind: tower::TowerKind::Sniper,
-                                        pos: best,
-                                    });
-                                }
                             }
                             self.play_sounds(&sounds);
                         }
@@ -198,6 +185,55 @@ impl App {
                 self.back_to_menu(Some(msg.to_string()));
             }
         }
+    }
+
+    /// Starts a new game on the lobby's map and mode with the profile's skills.
+    fn start_game(&mut self) {
+        self.game.perks = self.profile.perks();
+        self.game.restart(self.lobby.map, self.lobby.sandbox);
+        self.xp_wave = 0;
+        self.victory_awarded = false;
+    }
+
+    /// Gives XP for waves cleared (and winning) since the last check.
+    fn award_xp(&mut self) {
+        let g = &self.game;
+        if g.sandbox {
+            return;
+        }
+        if g.wave < self.xp_wave {
+            // A restart or a retried wave.
+            self.xp_wave = g.wave.saturating_sub(1);
+        }
+        let cleared = if g.wave_active {
+            g.wave.saturating_sub(1)
+        } else {
+            g.wave
+        };
+        let difficulty = g.map.difficulty();
+        let mut xp = 0;
+        while self.xp_wave < cleared {
+            self.xp_wave += 1;
+            xp += profile::wave_xp(self.xp_wave, difficulty);
+        }
+        let won = g.state == game::GameState::Victory;
+        if won && !self.victory_awarded {
+            self.victory_awarded = true;
+            xp += profile::victory_xp(difficulty);
+        }
+        if g.state == game::GameState::Playing {
+            self.victory_awarded = false;
+        }
+        if xp == 0 {
+            return;
+        }
+        let levels = self.profile.add_xp(xp);
+        let text = if levels > 0 {
+            format!("+{xp} XP  -  LEVEL UP! Level {}", self.profile.level())
+        } else {
+            format!("+{xp} XP")
+        };
+        self.game.xp_toast = Some((text, if levels > 0 { 4.0 } else { 2.0 }));
     }
 
     fn update_game(&mut self) {
@@ -265,6 +301,14 @@ impl App {
             }
         }
 
+        self.award_xp();
+        if let Some((_, t)) = &mut self.game.xp_toast {
+            *t -= get_frame_time();
+            if *t <= 0.0 {
+                self.game.xp_toast = None;
+            }
+        }
+
         if self.game.request.take() == Some(Request::MainMenu) {
             self.back_to_menu(None);
         }
@@ -283,54 +327,29 @@ async fn main() {
         pending_sounds: Vec::new(),
         snapshot_timer: 0.0,
         host_ip: String::new(),
+        profile: profile::Profile::load(),
+        xp_wave: 0,
+        victory_awarded: false,
     };
 
-    {
-        let mp = std::env::var("MP").unwrap_or_default();
-        if mp == "host" {
-            app.lobby.map = 1;
-            app.update_menu_with(Some(LobbyAction::Host));
-            app.game.gold = 5000;
-            for (k, x, y) in [
-                (tower::TowerKind::Arrow, 230.0, 300.0),
-                (tower::TowerKind::Cannon, 330.0, 250.0),
-                (tower::TowerKind::Frost, 520.0, 380.0),
-            ] {
-                let want = vec2(x, y);
-                let mut best = want;
-                let mut bd = f32::MAX;
-                for i in -25..25 {
-                    for j in -25..25 {
-                        let p = want + vec2(i as f32 * 4.0, j as f32 * 4.0);
-                        if p.distance(want) < bd && app.game.can_place(p) {
-                            bd = p.distance(want);
-                            best = p;
-                        }
-                    }
-                }
-                app.game.place(k, best);
-            }
-            app.game.apply(game::Action::ToggleAuto);
-        } else if mp == "client" {
-            app.update_menu_with(Some(LobbyAction::Join("127.0.0.1".into())));
-        }
-    }
     loop {
         match app.screen {
             Screen::Menu => {
                 app.update_menu();
-                render::draw_lobby(&app.lobby, &app.game);
+                let sounds = std::mem::take(&mut app.game.sounds);
+                app.play_sounds(&sounds);
+                render::draw_lobby(&app.lobby, &app.game, &app.profile);
             }
             Screen::Joining => {
                 app.poll_client();
-                render::draw_lobby(&app.lobby, &app.game);
+                render::draw_lobby(&app.lobby, &app.game, &app.profile);
             }
             Screen::Playing => {
                 app.update_game();
                 if matches!(app.screen, Screen::Playing) {
                     render::draw(&app.game);
                 } else {
-                    render::draw_lobby(&app.lobby, &app.game);
+                    render::draw_lobby(&app.lobby, &app.game, &app.profile);
                 }
             }
         }

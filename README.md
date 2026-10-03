@@ -1,6 +1,7 @@
 # Rusty Tower Defense
 
 A small tower defense game written in Rust with [macroquad](https://macroquad.rs).
+Capybaras defend against waves of cats.
 
 Enemies march along a winding path toward your castle. Build and upgrade
 towers on the grass to stop them. Survive all 30 waves to win.
@@ -68,6 +69,27 @@ path or another tower.
 | `R` / Retry button | After losing: rewind to just before the lost wave and try it again |
 | `Enter` / New game button | Start over after losing or winning |
 
+### Levels and skill tree
+
+Clearing waves earns XP (harder maps give more, and winning a whole game
+gives a big bonus; sandbox gives none). Every level gives one skill point to
+spend in the **Skills** screen on the main menu. Your profile is saved in
+`%APPDATA%\RustyTowerDefense\profile.txt` on Windows (or
+`~/.local/share/RustyTowerDefense/` elsewhere).
+
+The tree has five branches. Each has one tier 1 skill (1 point) that unlocks
+two tier 2 skills (2 points each):
+
+| Branch | Tier 1 | Tier 2 |
+| --- | --- | --- |
+| Economy | Savings: +50 starting gold | Investor: +100 more gold / Bounty Hunter: +15% gold from cats |
+| Defense | Thick Walls: +10 starting lives | Fortress: +20 more lives / Second Wind: +1 life per wave |
+| Offense | Sharp Teeth: +5% damage | Fury: +10% more damage / Quick Paws: 8% faster attacks |
+| Utility | Lookout: +5% range | Eagle Eyes: +10% more range / Deep Chill: freezes last 20% longer |
+| Builder | Bargain: towers 5% cheaper | Haggler: upgrades 10% cheaper / Fair Trade: sell for 85% |
+
+Points can be refunded at any time. In multiplayer, the host's skills apply.
+
 ### Settings menu
 
 - **Theme**: switch between day and night.
@@ -115,7 +137,10 @@ range, so it doesn't need one.
 
 ### Upgrades
 
-Every tower has 3 upgrade paths with 4 tiers each. Like in BTD, you can only
+Every tower is a capybara at its post. Each has 3 upgrade paths with 4 tiers.
+Hover an upgrade card to see exactly which stats it changes. Towers also
+change look as they level up: battlements at tier 2, a banner in their main
+path's color at tier 3, and a crown and glow at tier 4. Like in BTD, you can only
 upgrade 2 of the 3 paths on a tower, and only one of them past tier 2. Tower
 labels such as `2-0-3` show the tiers bought on each path.
 
@@ -128,12 +153,12 @@ labels such as `2-0-3` show the tiers bought on each path.
 | Sniper | Full Metal: damage, boss killer | Fast Firing: fire rate | Ricochet: bouncing shots, gold per wave |
 | Farm | Crops: more gold per wave | Bank: interest on your gold each wave | Support: boosts attack speed, range and damage of towers nearby (frost-sized radius); buffed towers show a green arrow badge, and a tower you're placing shows it too when it would be buffed. Each tier also widens its reach |
 
-### Enemies
+### Enemies (cats)
 
-- **Grunt**: the standard enemy.
-- **Runner**: fast and fragile, arrives in bursts from wave 3.
-- **Tank**: slow and tough, from wave 5.
-- **Boss**: shows up every 5th wave, more each time. Freezes, slows and stuns only half affect it.
+- **House Cat**: the standard enemy.
+- **Cheetah**: fast and fragile, arrives in bursts from wave 3.
+- **Fluffy**: a big, slow, tough Persian, from wave 5.
+- **Lion**: the boss, every 5th wave, more each time. Freezes, slows and stuns only half affect it.
 
 Enemy health grows every wave.
 
@@ -150,6 +175,7 @@ Trees, rocks, ponds, torches, pillars, suits of armor, craters and the lander bl
 
 - `src/main.rs`: window setup, main menu flow and main loop
 - `src/net.rs`: co-op multiplayer (host and client over TCP)
+- `src/profile.rs`: XP, levels, the skill tree and the save file
 - `src/audio.rs`: sound effects, synthesized at startup
 - `src/game.rs`: game state and simulation (spawning, targeting, projectiles, economy)
 - `src/map.rs`: maps, path geometry and layout constants

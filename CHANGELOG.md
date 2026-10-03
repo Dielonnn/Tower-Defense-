@@ -3,6 +3,19 @@
 Each release's number is set in `Cargo.toml` and shown in the window title and
 the settings menu. The commit for each release is listed under its heading.
 
+## v7.0
+
+Commit: the one titled "v7.0: levels, skill tree, cats and capybaras".
+
+- Levels: earn XP by clearing waves (more on harder maps, bonus for winning), saved between sessions
+- Skill tree with 5 tier 1 skills (1 point) and 10 tier 2 skills (2 points), refundable
+- Enemies are cats: House Cat, Cheetah, Fluffy and Lion
+- Towers are capybaras with their weapons (and a yuzu for the spa capy)
+- Towers visibly change as they upgrade: battlements, path-colored banners, a crown at tier 4, plus path-specific gear
+- Hovering an upgrade shows exactly which stats change
+- Fix: sell value now uses the price actually paid
+- Removed a leftover multiplayer test hook that had shipped since v4.0 (it only did anything if a special environment variable was set)
+
 ## v6.0
 
 Commit: the one titled "v6.0: Moon map, damage meter, Mercenary".

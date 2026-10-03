@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::audio::{DEFAULT_VOLUME, Sfx};
 use crate::enemy::{Enemy, EnemyKind};
 use crate::map::{Map, PATH_WIDTH, TILE, TOWER_RADIUS, distance_to_segment, in_map};
+use crate::profile::Perks;
 use crate::tower::{Stats, Targeting, Tower, TowerKind};
 use crate::wave::{self, MAX_WAVES, Spawn};
 
@@ -28,6 +29,8 @@ pub enum Menu {
     Settings,
     /// Tower guide, showing the tower at this index of `TowerKind::ALL`.
     Guide(usize),
+    /// The skill tree (main menu only).
+    Skills,
 }
 
 /// Things the UI asks the main loop to do.
@@ -191,6 +194,9 @@ pub struct Game {
     pub message: Option<(String, f32)>,
     /// Sandbox: everything is free, lives never drop, waves never end the game.
     pub sandbox: bool,
+    /// Skill tree bonuses in effect (the host's, in multiplayer).
+    #[serde(default)]
+    pub perks: Perks,
     /// Time since an enemy last reached the castle, for the hit flash.
     pub since_base_hit: f32,
     next_id: u32,
@@ -222,6 +228,9 @@ pub struct Game {
     /// Damage meter open.
     #[serde(skip)]
     pub show_stats: bool,
+    /// "+40 XP" style notice and how long it stays up.
+    #[serde(skip)]
+    pub xp_toast: Option<(String, f32)>,
     /// Sounds produced since the main loop last played them.
     #[serde(skip)]
     pub sounds: Vec<Sfx>,
@@ -272,6 +281,7 @@ impl Game {
             time: 0.0,
             message: None,
             sandbox: false,
+            perks: Perks::default(),
             since_base_hit: 10.0,
             next_id: 0,
             next_tower_id: 0,
@@ -285,6 +295,7 @@ impl Game {
             game_volume: DEFAULT_VOLUME,
             dragging: None,
             show_stats: false,
+            xp_toast: None,
             sounds: Vec::new(),
             outbox: Vec::new(),
             request: None,
@@ -300,6 +311,9 @@ impl Game {
         // New games always start at normal speed with auto play off.
         let mut fresh = Self::with_map(map_index);
         fresh.sandbox = sandbox;
+        fresh.perks = self.perks;
+        fresh.gold += fresh.perks.start_gold;
+        fresh.lives += fresh.perks.start_lives;
         fresh.keep_local(self);
         fresh.build_choice = None;
         fresh.selected = None;
@@ -449,10 +463,14 @@ impl Game {
     }
 
     pub fn place(&mut self, kind: TowerKind, pos: Vec2) -> bool {
-        if !self.can_place(pos) || !self.charge(kind.cost()) {
+        let price = self.tower_cost(kind);
+        if !self.can_place(pos) || !self.charge(price) {
             return false;
         }
-        self.towers.push(Tower::new(self.next_tower_id, kind, pos));
+        let mut tower = Tower::new(self.next_tower_id, kind, pos);
+        // Sell value is based on what was actually paid.
+        tower.invested = price;
+        self.towers.push(tower);
         self.next_tower_id += 1;
         self.sounds.push(Sfx::Place);
         true
@@ -462,7 +480,7 @@ impl Game {
         let Some(i) = self.tower_index(id) else {
             return;
         };
-        let Some(cost) = self.towers[i].upgrade_cost(path) else {
+        let Some(cost) = self.upgrade_price(&self.towers[i], path) else {
             return;
         };
         if !self.charge(cost) {
@@ -484,7 +502,7 @@ impl Game {
         if let Some(slot) = self.sold_damage.get_mut(tower.kind.index()) {
             *slot += tower.damage_dealt;
         }
-        let value = tower.sell_value();
+        let value = self.sell_value(&tower);
         self.gold += value;
         self.sounds.push(Sfx::Sell);
         self.floaters.push(Floater {
@@ -559,7 +577,33 @@ impl Game {
 
     /// Stats for tower `i` including buffs from nearby support farms.
     pub fn effective_stats(&self, i: usize) -> Stats {
-        effective_stats(&self.towers, i)
+        effective_stats(&self.towers, i, &self.perks)
+    }
+
+    /// A tower's price after skill tree discounts.
+    pub fn tower_cost(&self, kind: TowerKind) -> u32 {
+        discounted(kind.cost(), self.perks.build_discount)
+    }
+
+    /// Price of the next upgrade on `path`, if it can be bought.
+    pub fn upgrade_price(&self, tower: &Tower, path: usize) -> Option<u32> {
+        tower
+            .upgrade_cost(path)
+            .map(|c| discounted(c, self.perks.upgrade_discount))
+    }
+
+    pub fn sell_value(&self, tower: &Tower) -> u32 {
+        (tower.invested as f32 * self.perks.sell_ratio) as u32
+    }
+
+    /// `stats` with the skill tree bonuses applied.
+    pub fn with_perks(&self, stats: Stats) -> Stats {
+        apply_perks(stats, &self.perks)
+    }
+
+    /// Stats a freshly placed tower of `kind` would have (for previews).
+    pub fn preview_stats(&self, kind: TowerKind) -> Stats {
+        apply_perks(kind.stats([0; crate::tower::PATHS]), &self.perks)
     }
 
     /// Whether tower `i` is currently boosted by a support farm.
@@ -658,6 +702,7 @@ impl Game {
             }
         }
         self.gold += bonus + income;
+        self.lives += self.perks.lives_per_wave;
         self.sounds.push(Sfx::WaveClear);
         if income > 0 {
             self.sounds.push(Sfx::Coin);
@@ -727,7 +772,7 @@ impl Game {
 
     fn update_towers(&mut self, dt: f32) {
         let all_stats: Vec<Stats> = (0..self.towers.len())
-            .map(|i| effective_stats(&self.towers, i))
+            .map(|i| effective_stats(&self.towers, i, &self.perks))
             .collect();
         let Self {
             towers,
@@ -973,7 +1018,7 @@ impl Game {
                 continue;
             }
             let e = self.enemies.swap_remove(i);
-            let reward = e.kind.reward();
+            let reward = (e.kind.reward() as f32 * self.perks.kill_gold).round() as u32;
             self.gold += reward;
             self.sounds.push(Sfx::EnemyDeath);
             self.effects.push(Effect::ring(
@@ -1027,8 +1072,24 @@ fn buff_for(towers: &[Tower], i: usize) -> Option<(f32, f32, f32)> {
     best
 }
 
-fn effective_stats(towers: &[Tower], i: usize) -> Stats {
-    let mut s = towers[i].stats();
+fn discounted(cost: u32, discount: f32) -> u32 {
+    (cost as f32 * (1.0 - discount)).round() as u32
+}
+
+/// Applies the skill tree's global bonuses to a tower's stats.
+fn apply_perks(mut s: Stats, perks: &Perks) -> Stats {
+    s.damage *= perks.damage;
+    s.burn_dps *= perks.damage;
+    s.cooldown /= perks.attack_speed;
+    if s.range.is_finite() {
+        s.range *= perks.range;
+    }
+    s.freeze_time *= perks.freeze;
+    s
+}
+
+fn effective_stats(towers: &[Tower], i: usize, perks: &Perks) -> Stats {
+    let mut s = apply_perks(towers[i].stats(), perks);
     if let Some((speed, range, damage)) = buff_for(towers, i) {
         s.cooldown /= 1.0 + speed;
         if s.range.is_finite() {
@@ -1632,5 +1693,28 @@ pub mod tests {
     fn enemies_are_slower_bosses_most_of_all() {
         assert!((EnemyKind::Grunt.speed() - 85.5).abs() < 1e-3);
         assert!((EnemyKind::Boss.speed() - 29.75).abs() < 1e-3);
+    }
+
+    #[test]
+    fn skill_perks_change_prices_stats_and_start() {
+        let mut game = Game::new();
+        game.perks = crate::profile::Perks {
+            start_gold: 150,
+            start_lives: 30,
+            damage: 1.15,
+            build_discount: 0.05,
+            sell_ratio: 0.85,
+            ..Default::default()
+        };
+        game.apply(Action::Restart);
+        assert_eq!(
+            (game.gold, game.lives),
+            (START_GOLD + 150, START_LIVES + 30)
+        );
+        assert_eq!(game.tower_cost(TowerKind::Sniper), 114);
+        game.place(TowerKind::Sniper, grass(&game));
+        let base = game.towers[0].stats().damage;
+        assert!((game.effective_stats(0).damage - base * 1.15).abs() < 1e-3);
+        assert_eq!(game.sell_value(&game.towers[0]), (114.0 * 0.85) as u32);
     }
 }

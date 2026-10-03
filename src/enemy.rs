@@ -60,12 +60,24 @@ impl EnemyKind {
         }
     }
 
+    /// The enemies are cats: grunts are house cats, runners cheetahs, tanks
+    /// big fluffy Persians and bosses lions.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Grunt => "House Cat",
+            Self::Runner => "Cheetah",
+            Self::Tank => "Fluffy",
+            Self::Boss => "Lion",
+        }
+    }
+
+    /// Main fur color.
     pub fn color(self) -> Color {
         match self {
-            Self::Grunt => Color::from_rgba(120, 200, 90, 255),
-            Self::Runner => Color::from_rgba(240, 220, 90, 255),
-            Self::Tank => Color::from_rgba(130, 130, 150, 255),
-            Self::Boss => Color::from_rgba(200, 50, 70, 255),
+            Self::Grunt => Color::from_rgba(235, 150, 70, 255),
+            Self::Runner => Color::from_rgba(240, 200, 95, 255),
+            Self::Tank => Color::from_rgba(245, 240, 232, 255),
+            Self::Boss => Color::from_rgba(215, 165, 90, 255),
         }
     }
 
