@@ -5,6 +5,8 @@ the settings menu. The commit for each release is listed under its heading.
 
 ## v4.0
 
+Commit: the one titled "v4.0: main menu, co-op multiplayer, audio, castle map".
+
 - Main menu to pick the map and mode, host or join a party, open settings or quit
 - Co-op multiplayer for up to 4 players over TCP (Host party / Join party)
 - Sound effects for towers and the game, with Tower and Game volume sliders (25% default)
@@ -19,7 +21,6 @@ the settings menu. The commit for each release is listed under its heading.
 ## v3.0
 
 Commit: the one titled "Label releases: v3.0".
-
 
 - Enemies damage the castle at the end of the path (shake, flash, "-N")
 - Sketch map straightened so every segment is horizontal or vertical
