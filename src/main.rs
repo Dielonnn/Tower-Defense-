@@ -13,9 +13,16 @@ use macroquad::prelude::*;
 
 use game::Game;
 
+/// Shown in the window title and settings menu, e.g. "v3.0".
+pub fn version_label() -> String {
+    let major = env!("CARGO_PKG_VERSION_MAJOR");
+    let minor = env!("CARGO_PKG_VERSION_MINOR");
+    format!("v{major}.{minor}")
+}
+
 fn window_conf() -> Conf {
     Conf {
-        window_title: "Rusty Tower Defense".to_owned(),
+        window_title: format!("Rusty Tower Defense {}", version_label()),
         window_width: map::SCREEN_W as i32,
         window_height: map::SCREEN_H as i32,
         window_resizable: false,

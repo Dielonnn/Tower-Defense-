@@ -5,6 +5,10 @@ A small tower defense game written in Rust with [macroquad](https://macroquad.rs
 Enemies march along a winding path toward your castle. Build and upgrade
 towers on the grass to stop them. Survive all 30 waves to win.
 
+## Versions
+
+See [CHANGELOG.md](CHANGELOG.md). The current version is shown in the window title and the settings menu.
+
 ## Running
 
 ```sh

@@ -922,6 +922,13 @@ fn draw_settings(game: &Game, t: &Theme) {
     let p = ui::settings_panel();
     panel_rect(p, t.panel, t.border);
     text_centered("Settings", vec2(p.center().x, p.y + 34.0), 32, t.text);
+    text_right(
+        &crate::version_label(),
+        p.x + p.w - 12.0,
+        p.y + 22.0,
+        18,
+        t.text_dim,
+    );
 
     let theme = if game.night {
         "Theme: Night"
