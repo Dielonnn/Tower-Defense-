@@ -39,6 +39,9 @@ no installer or extra files needed.
 
 ## How to play
 
+The game opens on the main menu. Pick a map (Sketch or Castle) and a mode
+(Normal or Sandbox), then press **Play**, or host or join a party.
+
 You start with 150 gold and 20 lives. Killing enemies earns gold, and
 clearing a wave pays a bonus. Enemies that reach the castle at the end of
 the path damage it and cost you lives (tanks 2, bosses 10).
@@ -59,7 +62,6 @@ path or another tower.
 | `A` | Toggle auto play (next wave starts on its own) |
 | `F` | Cycle game speed (x1, x2, x3) |
 | `P` | Pause |
-| `M` | Switch map (before the first wave only) |
 | `Esc` (nothing selected) or Settings button | Open the settings menu |
 | `R` | Restart after game over or victory |
 
@@ -67,12 +69,30 @@ path or another tower.
 
 - **Theme**: switch between day and night.
 - **Tower guide**: every tower's stats and all 12 of its upgrades.
-- **New game** / **New sandbox game**: restart in normal or sandbox mode.
+- **Tower sounds** / **Game sounds**: volume sliders, 25% by default.
+- **Restart** and **Main menu** (or **Leave party** in multiplayer).
+
+### Multiplayer (co-op)
+
+Up to 4 players share one game: the same gold, lives and towers, and anyone
+can build, upgrade, sell or start waves.
+
+- **Host party** starts a game with the map and mode you picked. The bottom
+  left of the screen shows the address friends should join, e.g.
+  `192.168.1.20:7777`.
+- **Join party**: type the host's address in the box (the port is optional)
+  and press Join.
+- Players can join at any time, even mid-game. Menus don't pause the game
+  in a party.
+- It uses TCP port 7777. On a home network it works as is; Windows may ask
+  to allow the game through the firewall the first time you host. Playing
+  over the internet needs the host to forward port 7777 or use a LAN tool
+  such as a VPN.
 
 ### Sandbox mode
 
-For testing builds. Towers and upgrades are free, lives never drop, and the
-game never ends. The sidebar gets extra controls to spawn any enemy (Shift
+For testing builds. Towers and upgrades are free, lives never drop, and waves
+go on forever (the counter shows "Infinite"). The sidebar gets extra controls to spawn any enemy (Shift
 for five at once), pick which wave comes next (this also sets how tough
 spawned enemies are, up to wave 99) and clear the field.
 
@@ -80,9 +100,9 @@ spawned enemies are, up to wave 99) and clear the field.
 
 | Tower | Cost | Notes |
 | --- | --- | --- |
-| Arrow | 50 | Arrows fly through their target and keep going 2 tiles, hitting everything on the way |
+| Arrow | 50 | Arrows fly through their target and keep going 2 tiles, hitting everything on the way. Multi-shot upgrades fire a tight parallel volley |
 | Cannon | 90 | Slow, splash damage |
-| Frost | 70 | Pulses to freeze every enemy in range. Holds fire while everything in range is already frozen |
+| Frost | 70 | Pulses to freeze every enemy in range. A thawed enemy can't be refrozen for 1.5s. Holds fire while nothing in range can be frozen |
 | Sniper | 120 | Global range, heavy damage, fires slowly |
 | Farm | 150 | No attack. Pays 40 gold every time a wave is cleared |
 
@@ -101,7 +121,7 @@ labels such as `2-0-3` show the tiers bought on each path.
 | Cannon | Big Bombs: damage, blast, stun | Rapid Reload: fire rate | Incendiary: burning |
 | Frost | Deep Freeze: longer freezes, faster pulses | Frostbite: slows enemies after they thaw | Shatter: damage, hit enemies take extra damage |
 | Sniper | Full Metal: damage, boss killer | Fast Firing: fire rate | Ricochet: bouncing shots, gold per wave |
-| Farm | Crops: more gold per wave | Bank: interest on your gold each wave | Clinic: lives per wave |
+| Farm | Crops: more gold per wave | Bank: interest on your gold each wave | Support: boosts attack speed, range and damage of towers nearby (frost-sized radius); buffed towers show a green arrow badge |
 
 ### Enemies
 
@@ -114,12 +134,17 @@ Enemy health grows every wave.
 
 ### Maps
 
-- **Sketch** (default): a long path that loops over itself twice.
-- **Zigzag**: a short path, so enemies reach the castle much sooner. Harder.
+- **Sketch** (default): a long meadow path that loops over itself twice, with trees and rocks.
+- **Castle**: a throne room. The track is a royal rug lined with torches, and
+  the path is short, so enemies reach the throne much sooner. Harder.
+
+Trees, rocks, torches and pillars block tower placement.
 
 ## Code layout
 
-- `src/main.rs`: window setup and main loop
+- `src/main.rs`: window setup, main menu flow and main loop
+- `src/net.rs`: co-op multiplayer (host and client over TCP)
+- `src/audio.rs`: sound effects, synthesized at startup
 - `src/game.rs`: game state and simulation (spawning, targeting, projectiles, economy)
 - `src/map.rs`: maps, path geometry and layout constants
 - `src/tower.rs`: tower stats, upgrade paths and upgrade rules

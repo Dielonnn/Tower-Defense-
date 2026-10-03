@@ -1,7 +1,10 @@
 [package]
 name = "tower_defense"
-version = "3.0.0"
+version = "4.0.0"
 edition = "2024"
 
 [dependencies]
+bincode = "1"
+glam = { version = "0.27", features = ["serde"] }
 macroquad = "0.4"
+serde = { version = "1.0.229", features = ["derive"] }

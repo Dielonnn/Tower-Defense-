@@ -1,5 +1,6 @@
 use crate::map::TILE;
 use macroquad::prelude::*;
+use serde::{Deserialize, Serialize};
 
 pub const PATHS: usize = 3;
 pub const TIERS: u8 = 4;
@@ -9,7 +10,7 @@ pub const MAX_PATHS_USED: usize = 2;
 pub const MAX_SECONDARY_TIER: u8 = 2;
 pub const SELL_RATIO: f32 = 0.7;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TowerKind {
     Arrow,
     Cannon,
@@ -126,10 +127,10 @@ const FARM_UPGRADES: [[Upgrade; 4]; PATHS] = [
         up("Wall Street", "12% interest, max 500g", 2100),
     ],
     [
-        up("Herb Garden", "+1 life per wave", 160),
-        up("Clinic", "+1 life per wave", 380),
-        up("Hospital", "+2 lives per wave", 800),
-        up("Sanctuary", "+4 lives per wave", 1800),
+        up("War Drums", "Nearby towers +10% speed", 220),
+        up("Watchtower", "Nearby towers +10% range", 450),
+        up("Armory", "Nearby towers +20% damage", 900),
+        up("Command Post", "+15% more on every buff", 2200),
     ],
 ];
 
@@ -188,7 +189,7 @@ impl TowerKind {
             Self::Cannon => ["Big Bombs", "Rapid Reload", "Incendiary"],
             Self::Frost => ["Deep Freeze", "Frostbite", "Shatter"],
             Self::Sniper => ["Full Metal", "Fast Firing", "Ricochet"],
-            Self::Farm => ["Crops", "Bank", "Clinic"],
+            Self::Farm => ["Crops", "Bank", "Support"],
         }
     }
 
@@ -394,17 +395,25 @@ fn apply_upgrade(kind: TowerKind, path: usize, tier: u8, s: &mut Stats) {
         (Farm, 1, 1) => (s.interest, s.interest_cap) = (0.05, 100),
         (Farm, 1, 2) => (s.interest, s.interest_cap) = (0.08, 200),
         (Farm, 1, 3) => (s.interest, s.interest_cap) = (0.12, 500),
-        (Farm, 2, 0) => s.lives_per_wave += 1,
-        (Farm, 2, 1) => s.lives_per_wave += 1,
-        (Farm, 2, 2) => s.lives_per_wave += 2,
-        (Farm, 2, 3) => s.lives_per_wave += 4,
+        (Farm, 2, 0) => {
+            // Same reach as a base frost tower.
+            s.buff_radius = TowerKind::Frost.base_stats().range;
+            s.buff_speed = 0.10;
+        }
+        (Farm, 2, 1) => s.buff_range = 0.10,
+        (Farm, 2, 2) => s.buff_damage = 0.20,
+        (Farm, 2, 3) => {
+            s.buff_speed += 0.15;
+            s.buff_range += 0.15;
+            s.buff_damage += 0.15;
+        }
 
         _ => {}
     }
 }
 
 /// Which enemy in range a tower shoots at.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Targeting {
     /// Furthest along the path.
     First,
@@ -443,7 +452,7 @@ impl Targeting {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Stats {
     pub damage: f32,
     /// Range in pixels; infinite for global towers.
@@ -470,7 +479,11 @@ pub struct Stats {
     pub boss_mult: f32,
     /// Gold paid when a wave is cleared.
     pub income: u32,
-    pub lives_per_wave: u32,
+    /// Support farms boost towers within `buff_radius` by these fractions.
+    pub buff_radius: f32,
+    pub buff_speed: f32,
+    pub buff_range: f32,
+    pub buff_damage: f32,
     /// Fraction of your gold paid as interest each wave, up to `interest_cap`.
     pub interest: f32,
     pub interest_cap: u32,
@@ -496,14 +509,20 @@ impl Default for Stats {
             bounces: 0,
             boss_mult: 1.0,
             income: 0,
-            lives_per_wave: 0,
+            buff_radius: 0.0,
+            buff_speed: 0.0,
+            buff_range: 0.0,
+            buff_damage: 0.0,
             interest: 0.0,
             interest_cap: 0,
         }
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Tower {
+    /// Stable id so players can refer to the same tower over the network.
+    pub id: u32,
     pub kind: TowerKind,
     pub pos: Vec2,
     pub tiers: [u8; PATHS],
@@ -517,8 +536,9 @@ pub struct Tower {
 }
 
 impl Tower {
-    pub fn new(kind: TowerKind, pos: Vec2) -> Self {
+    pub fn new(id: u32, kind: TowerKind, pos: Vec2) -> Self {
         Self {
+            id,
             kind,
             pos,
             tiers: [0; PATHS],
@@ -577,7 +597,7 @@ mod tests {
 
     #[test]
     fn upgrade_path_rules() {
-        let mut t = Tower::new(TowerKind::Arrow, Vec2::ZERO);
+        let mut t = Tower::new(0, TowerKind::Arrow, Vec2::ZERO);
         t.tiers = [1, 1, 0];
         assert!(!t.path_open(2), "a third path is not allowed");
         assert!(t.path_open(0));
@@ -599,8 +619,12 @@ mod tests {
     #[test]
     fn upgrades_stack() {
         let base = TowerKind::Farm.stats([0; PATHS]);
-        let upgraded = TowerKind::Farm.stats([2, 0, 1]);
+        let upgraded = TowerKind::Farm.stats([2, 0, 4]);
         assert_eq!(upgraded.income, base.income + 60);
-        assert_eq!(upgraded.lives_per_wave, 1);
+        assert!((upgraded.buff_speed - 0.25).abs() < 1e-5);
+        assert_eq!(
+            upgraded.buff_radius,
+            TowerKind::Frost.stats([0; PATHS]).range
+        );
     }
 }

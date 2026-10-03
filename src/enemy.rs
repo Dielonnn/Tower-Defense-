@@ -1,6 +1,10 @@
 use macroquad::prelude::*;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// After thawing, an enemy can't be frozen again for this long.
+pub const FREEZE_IMMUNITY: f32 = 1.5;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EnemyKind {
     Grunt,
     Runner,
@@ -73,6 +77,7 @@ impl EnemyKind {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Enemy {
     pub id: u32,
     pub kind: EnemyKind,
@@ -83,6 +88,8 @@ pub struct Enemy {
     pub slow_factor: f32,
     pub slow_timer: f32,
     pub freeze_timer: f32,
+    /// Counts down the freeze plus `FREEZE_IMMUNITY`; no refreezing until 0.
+    pub freeze_immunity: f32,
     /// Extra damage fraction taken while `brittle_timer` runs.
     pub brittle: f32,
     pub brittle_timer: f32,
@@ -108,6 +115,7 @@ impl Enemy {
             slow_factor: 1.0,
             slow_timer: 0.0,
             freeze_timer: 0.0,
+            freeze_immunity: 0.0,
             brittle: 0.0,
             brittle_timer: 0.0,
             stun_timer: 0.0,
@@ -128,6 +136,15 @@ impl Enemy {
 
     pub fn frozen(&self) -> bool {
         self.freeze_timer > 0.0
+    }
+
+    /// Frozen recently and still thawing out, so it can't be refrozen yet.
+    pub fn freeze_immune(&self) -> bool {
+        !self.frozen() && self.freeze_immunity > 0.0
+    }
+
+    pub fn can_freeze(&self) -> bool {
+        self.freeze_immunity <= 0.0
     }
 
     pub fn stunned(&self) -> bool {
@@ -166,9 +183,15 @@ impl Enemy {
         self.slow_timer = self.slow_timer.max(time);
     }
 
-    pub fn apply_freeze(&mut self, time: f32) {
+    /// Freezes the enemy unless it is still immune from its last freeze.
+    pub fn apply_freeze(&mut self, time: f32) -> bool {
+        if !self.can_freeze() {
+            return false;
+        }
         let time = time * self.kind.control_resistance();
-        self.freeze_timer = self.freeze_timer.max(time);
+        self.freeze_timer = time;
+        self.freeze_immunity = time + FREEZE_IMMUNITY;
+        true
     }
 
     pub fn apply_brittle(&mut self, amount: f32, time: f32) {
@@ -214,6 +237,7 @@ impl Enemy {
             self.slow_timer = (self.slow_timer - dt).max(0.0);
         }
         self.freeze_timer = (self.freeze_timer - dt).max(0.0);
+        self.freeze_immunity = (self.freeze_immunity - dt).max(0.0);
         self.brittle_timer = (self.brittle_timer - dt).max(0.0);
         self.stun_timer = (self.stun_timer - dt).max(0.0);
         self.burn_timer = (self.burn_timer - dt).max(0.0);

@@ -1,8 +1,8 @@
 use macroquad::prelude::*;
 
 use crate::enemy::EnemyKind;
-use crate::game::{Game, GameState, Menu};
-use crate::map::{SCREEN_H, SCREEN_W, SIDEBAR_W, SIDEBAR_X, TOP_BAR, in_map};
+use crate::game::{Action, Game, GameState, Menu, Request};
+use crate::map::{MAP_COUNT, Map, SCREEN_H, SCREEN_W, SIDEBAR_W, SIDEBAR_X, TOP_BAR, in_map};
 use crate::tower::{PATHS, TIERS, TowerKind};
 
 const PAD: f32 = 10.0;
@@ -77,7 +77,7 @@ pub fn sell_button() -> Rect {
     Rect::new(SIDEBAR_X + PAD, TOP_BAR + 432.0, INNER_W, 36.0)
 }
 
-// Always visible.
+// Always visible in game.
 
 pub fn wave_button() -> Rect {
     Rect::new(SIDEBAR_X + PAD, SCREEN_H - 56.0, 168.0, 46.0)
@@ -93,11 +93,7 @@ pub fn auto_button() -> Rect {
 }
 
 pub fn settings_button() -> Rect {
-    Rect::new(SCREEN_W - 530.0, 8.0, 100.0, 32.0)
-}
-
-pub fn map_button() -> Rect {
-    Rect::new(SCREEN_W - 420.0, 8.0, 180.0, 32.0)
+    Rect::new(SCREEN_W - 350.0, 8.0, 110.0, 32.0)
 }
 
 pub fn pause_button() -> Rect {
@@ -110,20 +106,54 @@ pub fn speed_button() -> Rect {
 
 // Settings menu.
 
-pub fn settings_panel() -> Rect {
-    Rect::new(
-        (SCREEN_W - 460.0) / 2.0,
-        (SCREEN_H - 430.0) / 2.0,
-        460.0,
-        430.0,
-    )
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsItem {
+    Theme,
+    Guide,
+    TowerVolume,
+    GameVolume,
+    Restart,
+    MainMenu,
+    Close,
 }
 
-pub const SETTINGS_ITEMS: usize = 5;
+impl SettingsItem {
+    pub fn is_slider(self) -> bool {
+        matches!(self, Self::TowerVolume | Self::GameVolume)
+    }
+}
 
-pub fn settings_item(i: usize) -> Rect {
-    let p = settings_panel();
+pub fn settings_items(in_game: bool, is_client: bool) -> Vec<SettingsItem> {
+    use SettingsItem::*;
+    let mut items = vec![Theme, Guide, TowerVolume, GameVolume];
+    if in_game {
+        if !is_client {
+            items.push(Restart);
+        }
+        items.push(MainMenu);
+    }
+    items.push(Close);
+    items
+}
+
+pub fn settings_panel(count: usize) -> Rect {
+    let h = 96.0 + count as f32 * 54.0;
+    Rect::new((SCREEN_W - 460.0) / 2.0, (SCREEN_H - h) / 2.0, 460.0, h)
+}
+
+pub fn settings_row(count: usize, i: usize) -> Rect {
+    let p = settings_panel(count);
     Rect::new(p.x + 40.0, p.y + 66.0 + i as f32 * 54.0, p.w - 80.0, 44.0)
+}
+
+/// The draggable part of a volume slider row.
+pub fn slider_track(row: Rect) -> Rect {
+    Rect::new(
+        row.x + 190.0,
+        row.y + row.h / 2.0 - 5.0,
+        row.w - 200.0,
+        10.0,
+    )
 }
 
 // Tower guide.
@@ -153,15 +183,169 @@ pub fn guide_card(path: usize, tier: usize) -> Rect {
     )
 }
 
+// Main menu.
+
+pub fn lobby_panel() -> Rect {
+    Rect::new((SCREEN_W - 500.0) / 2.0, 140.0, 500.0, 530.0)
+}
+
+pub fn lobby_map_card(i: usize) -> Rect {
+    let p = lobby_panel();
+    Rect::new(p.x + 20.0 + i as f32 * 235.0, p.y + 40.0, 225.0, 76.0)
+}
+
+pub fn lobby_mode_button(sandbox: bool) -> Rect {
+    let p = lobby_panel();
+    let i = if sandbox { 1.0 } else { 0.0 };
+    Rect::new(p.x + 20.0 + i * 235.0, p.y + 152.0, 225.0, 40.0)
+}
+
+pub fn lobby_play() -> Rect {
+    let p = lobby_panel();
+    Rect::new(p.x + 20.0, p.y + 212.0, 460.0, 52.0)
+}
+
+pub fn lobby_host() -> Rect {
+    let p = lobby_panel();
+    Rect::new(p.x + 20.0, p.y + 310.0, 460.0, 44.0)
+}
+
+pub fn lobby_address() -> Rect {
+    let p = lobby_panel();
+    Rect::new(p.x + 20.0, p.y + 364.0, 300.0, 44.0)
+}
+
+pub fn lobby_join() -> Rect {
+    let p = lobby_panel();
+    Rect::new(p.x + 330.0, p.y + 364.0, 150.0, 44.0)
+}
+
+pub fn lobby_settings() -> Rect {
+    let p = lobby_panel();
+    Rect::new(p.x + 20.0, p.y + 428.0, 225.0, 40.0)
+}
+
+pub fn lobby_quit() -> Rect {
+    let p = lobby_panel();
+    Rect::new(p.x + 255.0, p.y + 428.0, 225.0, 40.0)
+}
+
+/// Main menu state.
+pub struct Lobby {
+    pub map: usize,
+    pub sandbox: bool,
+    /// Host address typed into the join box.
+    pub address: String,
+    pub typing: bool,
+    pub status: Option<String>,
+    /// Waiting on a connection; buttons are disabled.
+    pub busy: bool,
+    /// The selected map, drawn behind the menu.
+    pub preview: Map,
+}
+
+impl Lobby {
+    pub fn new() -> Self {
+        Self {
+            map: 0,
+            sandbox: false,
+            address: "127.0.0.1".to_string(),
+            typing: false,
+            status: None,
+            busy: false,
+            preview: Map::new(0),
+        }
+    }
+}
+
+pub enum LobbyAction {
+    Play,
+    Host,
+    Join(String),
+    Quit,
+}
+
 pub const PATH_KEYS: [KeyCode; PATHS] = [KeyCode::Comma, KeyCode::Period, KeyCode::Slash];
 pub const PATH_KEY_LABELS: [&str; PATHS] = [",", ".", "/"];
+pub const TIER_COUNT: usize = TIERS as usize;
+
+fn shift() -> bool {
+    is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift)
+}
+
+pub fn handle_lobby(lobby: &mut Lobby, game: &mut Game) -> Option<LobbyAction> {
+    if game.menu.is_some() {
+        handle_menu(game, false);
+        return None;
+    }
+    let mouse: Vec2 = mouse_position().into();
+    let click = is_mouse_button_pressed(MouseButton::Left);
+
+    if lobby.typing {
+        while let Some(c) = get_char_pressed() {
+            if (c.is_ascii_graphic() || c == ' ') && lobby.address.len() < 64 {
+                lobby.address.push(c);
+            }
+        }
+        if is_key_pressed(KeyCode::Backspace) {
+            lobby.address.pop();
+        }
+        if is_key_pressed(KeyCode::Enter) && !lobby.busy {
+            lobby.typing = false;
+            return Some(LobbyAction::Join(lobby.address.clone()));
+        }
+        if is_key_pressed(KeyCode::Escape) {
+            lobby.typing = false;
+        }
+    } else {
+        // Drain stray key presses so they don't show up later.
+        while get_char_pressed().is_some() {}
+        if is_key_pressed(KeyCode::Enter) && !lobby.busy {
+            return Some(LobbyAction::Play);
+        }
+    }
+
+    if !click {
+        return None;
+    }
+    lobby.typing = lobby_address().contains(mouse);
+    for i in 0..MAP_COUNT {
+        if lobby_map_card(i).contains(mouse) && lobby.map != i {
+            lobby.map = i;
+            lobby.preview = Map::new(i);
+        }
+    }
+    for sandbox in [false, true] {
+        if lobby_mode_button(sandbox).contains(mouse) {
+            lobby.sandbox = sandbox;
+        }
+    }
+    if lobby_settings().contains(mouse) {
+        game.menu = Some(Menu::Settings);
+    }
+    if lobby_quit().contains(mouse) {
+        return Some(LobbyAction::Quit);
+    }
+    if lobby.busy {
+        return None;
+    }
+    if lobby_play().contains(mouse) {
+        Some(LobbyAction::Play)
+    } else if lobby_host().contains(mouse) {
+        Some(LobbyAction::Host)
+    } else if lobby_join().contains(mouse) {
+        Some(LobbyAction::Join(lobby.address.clone()))
+    } else {
+        None
+    }
+}
 
 pub fn handle_input(game: &mut Game) {
     let mouse: Vec2 = mouse_position().into();
     let click = is_mouse_button_pressed(MouseButton::Left);
 
-    if let Some(menu) = game.menu {
-        handle_menu(game, menu, mouse, click);
+    if game.menu.is_some() {
+        handle_menu(game, true);
         return;
     }
     if click && settings_button().contains(mouse) {
@@ -170,8 +354,8 @@ pub fn handle_input(game: &mut Game) {
     }
 
     if game.state != GameState::Playing {
-        if is_key_pressed(KeyCode::R) || is_key_pressed(KeyCode::Enter) {
-            game.restart(game.map_index, game.sandbox);
+        if (is_key_pressed(KeyCode::R) || is_key_pressed(KeyCode::Enter)) && !game.is_client {
+            game.act(Action::Restart);
         }
         if is_key_pressed(KeyCode::Escape) {
             game.menu = Some(Menu::Settings);
@@ -204,30 +388,30 @@ pub fn handle_input(game: &mut Game) {
         game.selected = None;
     }
     if is_key_pressed(KeyCode::Space) || is_key_pressed(KeyCode::N) {
-        game.start_wave();
+        game.act(Action::StartWave);
     }
     if is_key_pressed(KeyCode::A) {
-        game.toggle_auto();
+        game.act(Action::ToggleAuto);
     }
     if is_key_pressed(KeyCode::F) {
         cycle_speed(game);
     }
     if is_key_pressed(KeyCode::P) {
-        game.paused = !game.paused;
+        game.act(Action::SetPaused(!game.paused));
     }
-    if is_key_pressed(KeyCode::M) {
-        game.next_map();
-    }
-    if is_key_pressed(KeyCode::Tab) {
-        game.cycle_targeting();
-    }
-    for (path, key) in PATH_KEYS.into_iter().enumerate() {
-        if is_key_pressed(key) {
-            game.upgrade_selected(path);
+    let selected = game.selected_tower().map(|t| t.id);
+    if let Some(id) = selected {
+        if is_key_pressed(KeyCode::Tab) {
+            game.act(Action::CycleTarget { tower: id });
         }
-    }
-    if is_key_pressed(KeyCode::S) || is_key_pressed(KeyCode::Delete) {
-        game.sell_selected();
+        for (path, key) in PATH_KEYS.into_iter().enumerate() {
+            if is_key_pressed(key) {
+                game.act(Action::Upgrade { tower: id, path });
+            }
+        }
+        if is_key_pressed(KeyCode::S) || is_key_pressed(KeyCode::Delete) {
+            sell(game, id);
+        }
     }
 
     if !click {
@@ -236,38 +420,38 @@ pub fn handle_input(game: &mut Game) {
 
     if in_map(mouse, 0.0) {
         if let Some(kind) = game.build_choice {
-            // Hold shift to keep placing the same tower.
-            let keep = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
-            if game.place(kind, mouse) && !keep {
-                game.build_choice = None;
+            if game.can_place(mouse) && game.can_afford(kind.cost()) {
+                game.act(Action::Place { kind, pos: mouse });
+                // Hold shift to keep placing the same tower.
+                if !shift() {
+                    game.build_choice = None;
+                }
             }
         } else {
-            game.selected = game.tower_at(mouse);
+            game.selected = game.tower_at(mouse).map(|t| t.id);
         }
         return;
     }
 
     if wave_button().contains(mouse) {
-        game.start_wave();
+        game.act(Action::StartWave);
     } else if auto_button().contains(mouse) {
-        game.toggle_auto();
+        game.act(Action::ToggleAuto);
     } else if pause_button().contains(mouse) {
-        game.paused = !game.paused;
+        game.act(Action::SetPaused(!game.paused));
     } else if speed_button().contains(mouse) {
         cycle_speed(game);
-    } else if game.wave == 0 && map_button().contains(mouse) {
-        game.next_map();
-    } else if game.selected.is_some() {
+    } else if let Some(id) = selected {
         if close_button().contains(mouse) {
             game.selected = None;
         } else if sell_button().contains(mouse) {
-            game.sell_selected();
+            sell(game, id);
         } else if target_button().contains(mouse) {
-            game.cycle_targeting();
+            game.act(Action::CycleTarget { tower: id });
         }
         for path in 0..PATHS {
             if path_card(path).contains(mouse) {
-                game.upgrade_selected(path);
+                game.act(Action::Upgrade { tower: id, path });
             }
         }
     } else {
@@ -285,52 +469,81 @@ pub fn handle_input(game: &mut Game) {
     }
 }
 
+fn sell(game: &mut Game, id: u32) {
+    game.act(Action::Sell { tower: id });
+    game.selected = None;
+}
+
 fn handle_sandbox_click(game: &mut Game, mouse: Vec2) {
-    // Shift-click spawns five at once.
-    let count = if is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift) {
-        5
-    } else {
-        1
-    };
+    let count = if shift() { 5 } else { 1 };
     for (i, kind) in SANDBOX_SPAWNS.into_iter().enumerate() {
         if sandbox_spawn_button(i).contains(mouse) {
-            for _ in 0..count {
-                game.sandbox_spawn(kind);
-            }
+            game.act(Action::SandboxSpawn { kind, count });
         }
     }
-    let step = if count > 1 { 5 } else { 1 };
+    let step = count as i64;
+    let wave = game.wave as i64;
     if sandbox_wave_down().contains(mouse) {
-        game.sandbox_set_wave(game.wave as i32 - step);
+        game.act(Action::SandboxSetWave((wave - step).max(0) as u32));
     } else if sandbox_wave_up().contains(mouse) {
-        game.sandbox_set_wave(game.wave as i32 + step);
+        game.act(Action::SandboxSetWave((wave + step) as u32));
     } else if sandbox_clear_button().contains(mouse) {
-        game.sandbox_clear();
+        game.act(Action::SandboxClear);
     }
 }
 
-fn handle_menu(game: &mut Game, menu: Menu, mouse: Vec2, click: bool) {
-    match menu {
-        Menu::Settings => {
+/// Settings menu and tower guide input. `in_game` is false on the main menu.
+pub fn handle_menu(game: &mut Game, in_game: bool) {
+    let mouse: Vec2 = mouse_position().into();
+    let click = is_mouse_button_pressed(MouseButton::Left);
+    match game.menu {
+        Some(Menu::Settings) => {
+            let items = settings_items(in_game, game.is_client);
+            let n = items.len();
             if is_key_pressed(KeyCode::Escape) {
                 game.menu = None;
+                return;
+            }
+            // Volume sliders follow the mouse while held.
+            if !is_mouse_button_down(MouseButton::Left) {
+                game.dragging = None;
+            }
+            if click {
+                game.dragging =
+                    (0..n).find(|&i| items[i].is_slider() && settings_row(n, i).contains(mouse));
+            }
+            if let Some(i) = game.dragging {
+                let track = slider_track(settings_row(n, i));
+                let value = ((mouse.x - track.x) / track.w).clamp(0.0, 1.0);
+                match items[i] {
+                    SettingsItem::TowerVolume => game.tower_volume = value,
+                    SettingsItem::GameVolume => game.game_volume = value,
+                    _ => {}
+                }
                 return;
             }
             if !click {
                 return;
             }
-            let hit = (0..SETTINGS_ITEMS).find(|&i| settings_item(i).contains(mouse));
-            match hit {
-                Some(0) => game.night = !game.night,
-                Some(1) => game.menu = Some(Menu::Guide(0)),
-                Some(2) => game.restart(game.map_index, false),
-                Some(3) => game.restart(game.map_index, true),
-                Some(_) => game.menu = None,
-                None if !settings_panel().contains(mouse) => game.menu = None,
+            let hit = (0..n).find(|&i| settings_row(n, i).contains(mouse));
+            match hit.map(|i| items[i]) {
+                Some(SettingsItem::Theme) => game.night = !game.night,
+                Some(SettingsItem::Guide) => game.menu = Some(Menu::Guide(0)),
+                Some(SettingsItem::Restart) => {
+                    game.menu = None;
+                    game.act(Action::Restart);
+                }
+                Some(SettingsItem::MainMenu) => {
+                    game.menu = None;
+                    game.request = Some(Request::MainMenu);
+                }
+                Some(SettingsItem::Close) => game.menu = None,
+                Some(_) => {}
+                None if !settings_panel(n).contains(mouse) => game.menu = None,
                 None => {}
             }
         }
-        Menu::Guide(i) => {
+        Some(Menu::Guide(i)) => {
             let n = TowerKind::ALL.len();
             if is_key_pressed(KeyCode::Escape) {
                 game.menu = Some(Menu::Settings);
@@ -353,6 +566,7 @@ fn handle_menu(game: &mut Game, menu: Menu, mouse: Vec2, click: bool) {
                 }
             }
         }
+        None => {}
     }
 }
 
@@ -366,12 +580,10 @@ fn choose_build(game: &mut Game, kind: TowerKind) {
 }
 
 fn cycle_speed(game: &mut Game) {
-    game.speed = match game.speed {
+    let next = match game.speed {
         1 => 2,
         2 => 3,
         _ => 1,
     };
+    game.act(Action::SetSpeed(next));
 }
-
-/// Number of upgrade tiers, for layout code that iterates them.
-pub const TIER_COUNT: usize = TIERS as usize;

@@ -3,6 +3,19 @@
 Each release's number is set in `Cargo.toml` and shown in the window title and
 the settings menu. The commit for each release is listed under its heading.
 
+## v4.0
+
+- Main menu to pick the map and mode, host or join a party, open settings or quit
+- Co-op multiplayer for up to 4 players over TCP (Host party / Join party)
+- Sound effects for towers and the game, with Tower and Game volume sliders (25% default)
+- Castle map (formerly Zigzag): stone hall with a rug for the track, torches,
+  pillars, banners and a throne. Sketch map gets trees, rocks, flowers and pebbles
+- More detailed towers, a ring color showing their highest tier, and a badge on buffed towers
+- Frozen enemies can't be refrozen for 1.5s after thawing
+- Arrow multi-shot upgrades fire parallel arrows in a tight volley
+- Farm's Clinic path replaced by Support: boosts speed, range and damage of nearby towers
+- Sandbox wave counter shows "Infinite" and waves are no longer capped at 99
+
 ## v3.0
 
 Commit: the one titled "Label releases: v3.0".

@@ -83,29 +83,75 @@ pub fn distance_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     segment_distance(p, a, b)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MapTheme {
+    /// Grass, trees and rocks.
+    Meadow,
+    /// Stone floor, a rug for the track, torches and pillars.
+    Castle,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PropKind {
+    Tree,
+    Rock,
+    Torch,
+    Pillar,
+}
+
+/// Scenery that towers can't be placed on.
+#[derive(Clone, Copy, Debug)]
+pub struct Prop {
+    pub kind: PropKind,
+    pub pos: Vec2,
+    pub radius: f32,
+    /// Per-prop random value for variety (size, flicker phase...).
+    pub seed: f32,
+}
+
+/// Small deterministic xorshift generator, so maps look the same every time.
+struct Rng(u32);
+
+impl Rng {
+    fn next(&mut self) -> f32 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 17;
+        self.0 ^= self.0 << 5;
+        self.0 as f32 / u32::MAX as f32
+    }
+}
+
+#[derive(Default)]
 pub struct Map {
     pub name: &'static str,
+    pub description: &'static str,
+    pub theme: Option<MapTheme>,
     pub waypoints: Vec<Vec2>,
     /// Where the spawn portal is drawn.
     pub portal: Vec2,
-    /// The castle; it sits on the last waypoint, so enemies that reach it
-    /// damage it.
+    /// The castle (or throne); it sits on the last waypoint, so enemies that
+    /// reach it damage it.
     pub base: Vec2,
-    /// Grass tufts for decoration: position, radius, shade.
+    /// Non-blocking ground detail: position, radius, shade.
     pub decor: Vec<(Vec2, f32, f32)>,
+    pub props: Vec<Prop>,
 }
 
 impl Map {
     pub fn new(index: usize) -> Self {
-        let (name, waypoints, portal, base) = match index % MAP_COUNT {
+        let (name, description, theme, waypoints, portal, base) = match index % MAP_COUNT {
             0 => (
                 "Sketch",
+                "Long meadow path. Normal",
+                MapTheme::Meadow,
                 SKETCH.iter().map(|&(x, y)| from_sketch(x, y)).collect(),
                 from_sketch(14.0, 236.0),
                 from_sketch(464.0, 478.0),
             ),
             _ => (
-                "Zigzag",
+                "Castle",
+                "Short rug to the throne. Hard",
+                MapTheme::Castle,
                 ZIGZAG.iter().map(|&(c, r)| grid_center(c, r)).collect(),
                 grid_center(0, 2),
                 grid_center(19, 5),
@@ -113,13 +159,24 @@ impl Map {
         };
         let mut map = Self {
             name,
+            description,
+            theme: Some(theme),
             waypoints,
             portal,
             base,
             decor: Vec::new(),
+            props: Vec::new(),
         };
         map.decor = map.make_decor();
+        map.props = match theme {
+            MapTheme::Meadow => map.meadow_props(),
+            MapTheme::Castle => map.castle_props(),
+        };
         map
+    }
+
+    pub fn theme(&self) -> MapTheme {
+        self.theme.unwrap_or(MapTheme::Meadow)
     }
 
     pub fn distance_to_path(&self, p: Vec2) -> f32 {
@@ -129,25 +186,113 @@ impl Map {
             .fold(f32::INFINITY, f32::min)
     }
 
-    /// Deterministic scattering of grass tufts that avoid the path.
+    /// Whether a circle at `pos` would overlap any scenery.
+    pub fn blocked(&self, pos: Vec2, radius: f32) -> bool {
+        self.props
+            .iter()
+            .any(|p| p.pos.distance(pos) < p.radius + radius)
+    }
+
+    fn free_spot(&self, p: Vec2, path_gap: f32, props: &[Prop], spacing: f32) -> bool {
+        self.distance_to_path(p) > PATH_WIDTH / 2.0 + path_gap
+            && p.distance(self.base) > 70.0
+            && p.distance(self.portal) > 50.0
+            && props.iter().all(|o| o.pos.distance(p) > spacing)
+    }
+
+    /// Deterministic scattering of ground detail that avoids the path.
     fn make_decor(&self) -> Vec<(Vec2, f32, f32)> {
-        let mut seed: u32 = 0x9e37_79b9;
-        let mut rand = move || {
-            seed ^= seed << 13;
-            seed ^= seed >> 17;
-            seed ^= seed << 5;
-            seed as f32 / u32::MAX as f32
-        };
+        let mut rng = Rng(0x9e37_79b9);
         let mut decor = Vec::new();
         for _ in 0..260 {
-            let p = vec2(MAP_X + rand() * MAP_W, MAP_Y + rand() * MAP_H);
-            let r = 3.0 + rand() * 9.0;
-            let shade = rand();
+            let p = vec2(MAP_X + rng.next() * MAP_W, MAP_Y + rng.next() * MAP_H);
+            let r = 3.0 + rng.next() * 9.0;
+            let shade = rng.next();
             if self.distance_to_path(p) > PATH_WIDTH / 2.0 + r + 4.0 {
                 decor.push((p, r, shade));
             }
         }
         decor
+    }
+
+    /// Trees around the edges of the meadow and a few rocks.
+    fn meadow_props(&self) -> Vec<Prop> {
+        let mut rng = Rng(0x2545_f491);
+        let mut props: Vec<Prop> = Vec::new();
+        for _ in 0..400 {
+            let p = vec2(MAP_X + rng.next() * MAP_W, MAP_Y + rng.next() * MAP_H);
+            let edge = p.x < MAP_X + 60.0
+                || p.x > MAP_X + MAP_W - 60.0
+                || p.y < MAP_Y + 50.0
+                || p.y > MAP_Y + MAP_H - 50.0;
+            let trees = props.iter().filter(|p| p.kind == PropKind::Tree).count();
+            if edge && trees < 16 && self.free_spot(p, 30.0, &props, 56.0) {
+                props.push(Prop {
+                    kind: PropKind::Tree,
+                    pos: p,
+                    radius: 20.0,
+                    seed: rng.next(),
+                });
+            }
+        }
+        for _ in 0..200 {
+            let p = vec2(MAP_X + rng.next() * MAP_W, MAP_Y + rng.next() * MAP_H);
+            let rocks = props.iter().filter(|p| p.kind == PropKind::Rock).count();
+            if rocks < 9 && in_map(p, 20.0) && self.free_spot(p, 14.0, &props, 90.0) {
+                props.push(Prop {
+                    kind: PropKind::Rock,
+                    pos: p,
+                    radius: 9.0,
+                    seed: rng.next(),
+                });
+            }
+        }
+        props
+    }
+
+    /// Torches lining both sides of the rug, plus pillars across the hall.
+    fn castle_props(&self) -> Vec<Prop> {
+        let mut rng = Rng(0x68e3_1da4);
+        let mut props: Vec<Prop> = Vec::new();
+        let mut side = 1.0;
+        for w in self.waypoints.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let len = a.distance(b);
+            let dir = (b - a) / len;
+            let normal = vec2(-dir.y, dir.x);
+            let mut d = 70.0;
+            while d < len - 30.0 {
+                let p = a + dir * d + normal * side * (PATH_WIDTH / 2.0 + 16.0);
+                side = -side;
+                d += 140.0;
+                if in_map(p, 10.0) && self.free_spot(p, 8.0, &props, 60.0) {
+                    props.push(Prop {
+                        kind: PropKind::Torch,
+                        pos: p,
+                        radius: 9.0,
+                        seed: rng.next(),
+                    });
+                }
+            }
+        }
+        let mut y = MAP_Y + 96.0;
+        while y < MAP_Y + MAP_H {
+            let mut x = MAP_X + 72.0;
+            while x < MAP_X + MAP_W {
+                let p = vec2(x, y);
+                if self.free_spot(p, 34.0, &props, 70.0) {
+                    props.push(Prop {
+                        kind: PropKind::Pillar,
+                        pos: p,
+                        radius: 15.0,
+                        seed: rng.next(),
+                    });
+                }
+                x += 240.0;
+            }
+            y += 240.0;
+        }
+        props
     }
 }
 
@@ -171,6 +316,23 @@ mod tests {
                 assert!(w[0].x == w[1].x || w[0].y == w[1].y, "{w:?}");
             }
         }
+    }
+
+    #[test]
+    fn castle_map_has_torches_and_props_block_placement() {
+        let map = Map::new(1);
+        assert_eq!(map.theme(), MapTheme::Castle);
+        let torch = map
+            .props
+            .iter()
+            .find(|p| p.kind == PropKind::Torch)
+            .unwrap();
+        assert!(map.blocked(torch.pos, TOWER_RADIUS));
+        assert!(
+            map.props
+                .iter()
+                .all(|p| map.distance_to_path(p.pos) > PATH_WIDTH / 2.0)
+        );
     }
 
     #[test]
