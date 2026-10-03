@@ -19,6 +19,20 @@ sudo apt install libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
 
 Run the tests with `cargo test`.
 
+### Building a Windows .exe
+
+On Windows, `cargo build --release` produces `target/release/tower_defense.exe`.
+To cross-compile from Linux:
+
+```sh
+rustup target add x86_64-pc-windows-gnu
+sudo apt install gcc-mingw-w64-x86-64
+cargo build --release --target x86_64-pc-windows-gnu
+```
+
+The exe ends up in `target/x86_64-pc-windows-gnu/release/` and runs on its own,
+no installer or extra files needed.
+
 ## How to play
 
 You start with 150 gold and 20 lives. Killing enemies earns gold, and
