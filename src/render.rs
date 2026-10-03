@@ -96,7 +96,7 @@ pub fn draw(game: &Game) {
     draw_sidebar(game, t);
     draw_top_bar(game, t);
     draw_message(game);
-    draw_overlay(game);
+    draw_overlay(game, t);
     draw_menus(game, true, t);
 }
 
@@ -632,6 +632,7 @@ fn draw_tower(tower: &Tower, c: Vec2, time: f32, alpha: f32, buffed: bool, t: &T
 
     match tower.kind {
         TowerKind::Farm => draw_farm(tower, c, time, alpha),
+        TowerKind::MinuteMan => draw_minuteman(tower, c, alpha),
         TowerKind::Arrow => {
             // Wooden platform with a crossbow on top.
             draw_poly(
@@ -843,6 +844,125 @@ fn draw_tower(tower: &Tower, c: Vec2, time: f32, alpha: f32, buffed: bool, t: &T
             with_alpha(BLACK, 0.6 * alpha),
         );
         text_centered(&label, pos, 14, with_alpha(GOLD, alpha));
+    }
+}
+
+/// A colonial rifleman seen from above. His gun changes with the upgrade
+/// path he's furthest along: musket/rifle, dual pistols or a light MG.
+fn draw_minuteman(tower: &Tower, c: Vec2, alpha: f32) {
+    let a = |col: Color| with_alpha(col, col.a * alpha);
+    let dir = vec2(tower.angle.cos(), tower.angle.sin());
+    let side = vec2(-dir.y, dir.x);
+    let recoil = (1.0 - tower.since_shot / 0.1).max(0.0) * 3.0;
+    let line = |p: Vec2, q: Vec2, w: f32, col: Color| draw_line(p.x, p.y, q.x, q.y, w, a(col));
+
+    // Trampled dirt patch.
+    draw_circle(c.x, c.y, TOWER_RADIUS, a(Color::new(0.55, 0.45, 0.32, 1.0)));
+    draw_circle_lines(
+        c.x,
+        c.y,
+        TOWER_RADIUS,
+        2.0,
+        a(Color::new(0.38, 0.30, 0.20, 1.0)),
+    );
+
+    let [rifle, pistols, gunner] = tower.tiers;
+    let build = if rifle + pistols + gunner == 0 {
+        0
+    } else if gunner >= rifle && gunner >= pistols {
+        2
+    } else if pistols >= rifle {
+        1
+    } else {
+        0
+    };
+    let coat = tower.kind.color();
+    let metal = Color::new(0.20, 0.20, 0.22, 1.0);
+    let wood = Color::new(0.45, 0.28, 0.14, 1.0);
+    let skin = Color::new(0.93, 0.78, 0.62, 1.0);
+
+    // Shoulders and coat.
+    let back = c - dir * 2.0;
+    draw_circle(back.x, back.y, 8.0, a(coat));
+    for s in [-1.0, 1.0] {
+        let sh = back + side * s * 6.5;
+        draw_circle(sh.x, sh.y, 4.5, a(darken(coat, 0.85)));
+    }
+
+    let mut muzzles = Vec::new();
+    match build {
+        1 => {
+            // Dual-wielded pistols.
+            for s in [-1.0, 1.0] {
+                let hand = c + side * s * 8.0 + dir * 5.0;
+                let tip = hand + dir * (9.0 - recoil);
+                line(back + side * s * 6.5, hand, 3.0, darken(coat, 0.85));
+                line(hand - dir * 2.0, tip, 3.5, metal);
+                draw_circle(hand.x, hand.y, 2.2, a(skin));
+                muzzles.push(tip);
+            }
+        }
+        2 => {
+            // Light machine gun with an ammo box and bipod.
+            let base = c + side * 3.0 - dir * 4.0;
+            let tip = base + dir * (28.0 - recoil);
+            line(base, base + dir * 10.0, 7.0, metal);
+            line(base, tip, 4.0, metal);
+            let box_c = c - side * 7.0 + dir * 4.0;
+            draw_rectangle(
+                box_c.x - 4.0,
+                box_c.y - 4.0,
+                8.0,
+                8.0,
+                a(Color::new(0.35, 0.40, 0.22, 1.0)),
+            );
+            let bipod = base + dir * 20.0;
+            line(bipod, bipod + side * 5.0 - dir * 3.0, 1.5, metal);
+            line(bipod, bipod - side * 5.0 - dir * 3.0, 1.5, metal);
+            muzzles.push(tip);
+        }
+        _ => {
+            // Musket, becoming a scoped rifle on the rifle path.
+            let base = c + side * 4.0 - dir * 6.0;
+            let tip = base + dir * (28.0 - recoil);
+            line(base, base + dir * 12.0, 4.5, wood);
+            line(base + dir * 8.0, tip, 2.5, metal);
+            if rifle >= 2 {
+                let s0 = base + dir * 9.0 + side * 3.0;
+                line(s0, s0 + dir * 8.0, 3.0, Color::new(0.08, 0.08, 0.1, 1.0));
+            }
+            muzzles.push(tip);
+        }
+    }
+    // Arms reaching to the weapon (pistols draw their own).
+    if build != 1 {
+        let grip = c + side * 4.0 + dir * 6.0;
+        line(back + side * 6.5, grip, 3.0, darken(coat, 0.85));
+        line(
+            back - side * 6.5,
+            grip - side * 2.0,
+            3.0,
+            darken(coat, 0.85),
+        );
+        draw_circle(grip.x, grip.y, 2.2, a(skin));
+    }
+
+    // Head with a tricorn hat.
+    let head = c - dir * 1.0;
+    draw_circle(head.x, head.y, 5.5, a(skin));
+    draw_triangle(
+        head + dir * 6.5,
+        head - dir * 4.0 + side * 7.0,
+        head - dir * 4.0 - side * 7.0,
+        a(Color::new(0.12, 0.10, 0.10, 1.0)),
+    );
+    draw_circle(head.x, head.y, 2.5, a(Color::new(0.22, 0.18, 0.16, 1.0)));
+
+    if tower.since_shot < 0.05 {
+        for m in muzzles {
+            let f = m + dir * 3.0;
+            draw_circle(f.x, f.y, 4.0, with_alpha(YELLOW, 0.85 * alpha));
+        }
     }
 }
 
@@ -1100,12 +1220,20 @@ fn draw_top_bar(game: &Game, t: &Theme) {
     );
     draw_text(game.lives.to_string(), 178.0, 32.0, 28.0, t.text);
 
-    let wave = if game.sandbox {
-        format!("Wave {} / Infinite", game.wave)
+    if game.sandbox {
+        let label = format!("Wave {} / ", game.wave);
+        let w = measure_text(&label, None, 28, 1.0).width;
+        draw_text(&label, 250.0, 32.0, 28.0, t.text);
+        draw_infinity(vec2(250.0 + w + 16.0, 23.0), 14.0, t.text);
     } else {
-        format!("Wave {}/{}", game.wave, MAX_WAVES)
-    };
-    draw_text(&wave, 250.0, 32.0, 28.0, t.text);
+        draw_text(
+            format!("Wave {}/{}", game.wave, MAX_WAVES),
+            250.0,
+            32.0,
+            28.0,
+            t.text,
+        );
+    }
     if game.sandbox {
         let r = Rect::new(520.0, 10.0, 110.0, 28.0);
         panel_rect(r, Color::new(0.85, 0.6, 0.1, 1.0), t.border);
@@ -1129,6 +1257,22 @@ fn draw_top_bar(game: &Game, t: &Theme) {
         BLUE,
         t,
     );
+}
+
+/// The default font has no infinity glyph, so draw a lemniscate instead.
+fn draw_infinity(center: Vec2, size: f32, color: Color) {
+    let point = |k: f32| {
+        let s = k.sin();
+        let d = 1.0 + s * s;
+        center + vec2(k.cos() / d, s * k.cos() / d) * size
+    };
+    let steps = 48;
+    for i in 0..steps {
+        let k0 = i as f32 / steps as f32 * std::f32::consts::TAU;
+        let k1 = (i + 1) as f32 / steps as f32 * std::f32::consts::TAU;
+        let (p, q) = (point(k0), point(k1));
+        draw_line(p.x, p.y, q.x, q.y, 3.0, color);
+    }
 }
 
 fn draw_sidebar(game: &Game, t: &Theme) {
@@ -1163,21 +1307,33 @@ fn draw_sidebar(game: &Game, t: &Theme) {
 }
 
 fn tower_card(r: Rect, kind: TowerKind, number: usize, affordable: bool, t: &Theme) {
-    let icon = vec2(r.x + 28.0, r.y + r.h / 2.0);
-    draw_circle(icon.x, icon.y, 16.0, kind.color());
-    draw_circle_lines(icon.x, icon.y, 16.0, 2.0, BLACK);
+    let icon = vec2(r.x + 26.0, r.y + r.h / 2.0);
+    draw_circle(icon.x, icon.y, 15.0, kind.color());
+    draw_circle_lines(icon.x, icon.y, 15.0, 2.0, BLACK);
     text_centered(&number.to_string(), icon, 20, BLACK);
     let name_color = if affordable { t.text } else { t.text_dim };
-    draw_text(kind.name(), r.x + 54.0, r.y + 24.0, 24.0, name_color);
+    draw_text(kind.name(), r.x + 50.0, r.y + 22.0, 23.0, name_color);
+    if kind.is_starter() {
+        let w = measure_text(kind.name(), None, 23, 1.0).width;
+        let tag = Rect::new(r.x + 56.0 + w, r.y + 8.0, 58.0, 16.0);
+        draw_rectangle(
+            tag.x,
+            tag.y,
+            tag.w,
+            tag.h,
+            Color::new(0.24, 0.59, 0.31, 1.0),
+        );
+        text_centered("STARTER", tag.center(), 14, WHITE);
+    }
     let cost_color = if affordable { t.gold } else { t.bad };
     text_right(
         &format!("{}g", kind.cost()),
         r.x + r.w - 10.0,
-        r.y + 24.0,
+        r.y + 22.0,
         22,
         cost_color,
     );
-    draw_text(kind.description(), r.x + 54.0, r.y + 46.0, 16.0, t.text_dim);
+    draw_text(kind.description(), r.x + 50.0, r.y + 42.0, 16.0, t.text_dim);
 }
 
 fn draw_build_panel(game: &Game, t: &Theme) {
@@ -1210,11 +1366,11 @@ fn draw_build_panel(game: &Game, t: &Theme) {
 
     let x = SIDEBAR_X + 14.0;
     if game.sandbox {
-        draw_text("SANDBOX", x, TOP_BAR + 424.0, 22.0, t.text);
+        draw_text("SANDBOX", x, TOP_BAR + 434.0, 22.0, t.text);
         text_right(
             "shift = x5",
             SIDEBAR_X + SIDEBAR_W - 12.0,
-            TOP_BAR + 424.0,
+            TOP_BAR + 434.0,
             16,
             t.text_dim,
         );
@@ -1243,13 +1399,13 @@ fn draw_build_panel(game: &Game, t: &Theme) {
         return;
     }
 
-    let mut y = TOP_BAR + 420.0;
+    let mut y = TOP_BAR + 432.0;
     let help = [
         "Click grass to place a tower.",
         "Shift+click places several.",
         "Click a tower to upgrade it.",
         "",
-        "1-5  pick tower   Tab  target",
+        "1-6  pick tower   Tab  target",
         ", . /  upgrade paths 1-3",
         "S  sell     Space  next wave",
         "A  auto waves   F  speed",
@@ -1281,6 +1437,24 @@ fn stat_lines(kind: TowerKind, s: &Stats) -> Vec<String> {
             s.arrows,
             s.pierce / TILE
         )),
+        TowerKind::MinuteMan => {
+            let mut extra = Vec::new();
+            if s.targets > 1 {
+                extra.push(format!("{} targets", s.targets));
+            }
+            if s.penetrate > 0 {
+                extra.push(format!("Pierce {}", s.penetrate));
+            }
+            if s.slow < 1.0 {
+                extra.push(format!("Slow {:.0}%", (1.0 - s.slow) * 100.0));
+            }
+            if s.boss_mult > 1.0 {
+                extra.push(format!("{:.0}x bosses", s.boss_mult));
+            }
+            if !extra.is_empty() {
+                lines.push(extra.join("  "));
+            }
+        }
         TowerKind::Cannon => {
             lines.push(format!("Splash {:.1} tiles", s.splash / TILE));
             let mut extra = Vec::new();
@@ -1471,7 +1645,7 @@ fn draw_message(game: &Game) {
     text_centered(text, center, 30, with_alpha(WHITE, a));
 }
 
-fn draw_overlay(game: &Game) {
+fn draw_overlay(game: &Game, t: &Theme) {
     let (title, color) = match game.state {
         GameState::Playing if game.paused && game.menu.is_none() => ("PAUSED", WHITE),
         GameState::Playing => return,
@@ -1481,20 +1655,30 @@ fn draw_overlay(game: &Game) {
     draw_rectangle(0.0, TOP_BAR, MAP_W, MAP_H, with_alpha(BLACK, 0.55));
     let center = vec2(MAP_W / 2.0, TOP_BAR + MAP_H / 2.0);
     text_centered(title, center - vec2(0.0, 30.0), 72, color);
-    let restart = if game.is_client {
-        "Waiting for the host to restart"
-    } else {
-        "Press R to restart"
-    };
     let sub = match game.state {
         GameState::Playing => "Press P to resume".to_string(),
-        GameState::GameOver => format!(
-            "You survived {} waves. {restart}",
-            game.wave.saturating_sub(1)
-        ),
-        GameState::Victory => format!("All {MAX_WAVES} waves defeated! {restart}"),
+        GameState::GameOver => format!("You were overrun on wave {}.", game.wave),
+        GameState::Victory => format!("All {MAX_WAVES} waves defeated!"),
     };
     text_centered(&sub, center + vec2(0.0, 30.0), 26, WHITE);
+    if game.state == GameState::Playing {
+        return;
+    }
+    if game.state == GameState::GameOver {
+        button(
+            ui::retry_button(),
+            &format!("Retry wave {} (R)", game.wave),
+            true,
+            GREEN_BTN,
+            t,
+        );
+    }
+    let label = if game.is_client {
+        "Host restarts"
+    } else {
+        "New game (Enter)"
+    };
+    button(ui::new_game_button(), label, !game.is_client, BLUE, t);
 }
 
 // ---------------------------------------------------------------- menus

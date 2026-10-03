@@ -25,10 +25,11 @@ impl EnemyKind {
     /// Pixels per second.
     pub fn speed(self) -> f32 {
         match self {
-            Self::Grunt => 90.0,
-            Self::Runner => 160.0,
-            Self::Tank => 56.0,
-            Self::Boss => 35.0,
+            // Everyone 5% slower than v4.0, bosses 15% slower.
+            Self::Grunt => 90.0 * 0.95,
+            Self::Runner => 160.0 * 0.95,
+            Self::Tank => 56.0 * 0.95,
+            Self::Boss => 35.0 * 0.85,
         }
     }
 

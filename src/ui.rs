@@ -2,7 +2,9 @@ use macroquad::prelude::*;
 
 use crate::enemy::EnemyKind;
 use crate::game::{Action, Game, GameState, Menu, Request};
-use crate::map::{MAP_COUNT, Map, SCREEN_H, SCREEN_W, SIDEBAR_W, SIDEBAR_X, TOP_BAR, in_map};
+use crate::map::{
+    MAP_COUNT, MAP_H, MAP_W, Map, SCREEN_H, SCREEN_W, SIDEBAR_W, SIDEBAR_X, TOP_BAR, in_map,
+};
 use crate::tower::{PATHS, TIERS, TowerKind};
 
 const PAD: f32 = 10.0;
@@ -13,14 +15,14 @@ const INNER_W: f32 = SIDEBAR_W - 2.0 * PAD;
 pub fn tower_button(i: usize) -> Rect {
     Rect::new(
         SIDEBAR_X + PAD,
-        TOP_BAR + 36.0 + i as f32 * 64.0,
+        TOP_BAR + 34.0 + i as f32 * 56.0,
         INNER_W,
-        58.0,
+        52.0,
     )
 }
 
 pub fn cancel_button() -> Rect {
-    Rect::new(SIDEBAR_X + PAD, TOP_BAR + 360.0, INNER_W, 36.0)
+    Rect::new(SIDEBAR_X + PAD, TOP_BAR + 372.0, INNER_W, 34.0)
 }
 
 pub const SANDBOX_SPAWNS: [EnemyKind; 4] = [
@@ -33,25 +35,25 @@ pub const SANDBOX_SPAWNS: [EnemyKind; 4] = [
 pub fn sandbox_spawn_button(i: usize) -> Rect {
     let w = (INNER_W - 8.0) / 2.0;
     let x = SIDEBAR_X + PAD + (i % 2) as f32 * (w + 8.0);
-    let y = TOP_BAR + 432.0 + (i / 2) as f32 * 36.0;
+    let y = TOP_BAR + 444.0 + (i / 2) as f32 * 36.0;
     Rect::new(x, y, w, 30.0)
 }
 
 pub fn sandbox_wave_down() -> Rect {
-    Rect::new(SIDEBAR_X + PAD, TOP_BAR + 506.0, 36.0, 30.0)
+    Rect::new(SIDEBAR_X + PAD, TOP_BAR + 518.0, 36.0, 30.0)
 }
 
 pub fn sandbox_wave_up() -> Rect {
     Rect::new(
         SIDEBAR_X + PAD + INNER_W - 36.0,
-        TOP_BAR + 506.0,
+        TOP_BAR + 518.0,
         36.0,
         30.0,
     )
 }
 
 pub fn sandbox_clear_button() -> Rect {
-    Rect::new(SIDEBAR_X + PAD, TOP_BAR + 544.0, INNER_W, 30.0)
+    Rect::new(SIDEBAR_X + PAD, TOP_BAR + 556.0, INNER_W, 30.0)
 }
 
 // Tower panel.
@@ -102,6 +104,18 @@ pub fn pause_button() -> Rect {
 
 pub fn speed_button() -> Rect {
     Rect::new(SCREEN_W - 116.0, 8.0, 106.0, 32.0)
+}
+
+// Game over / victory overlay.
+
+pub fn retry_button() -> Rect {
+    let c = vec2(MAP_W / 2.0, TOP_BAR + MAP_H / 2.0);
+    Rect::new(c.x - 230.0, c.y + 64.0, 220.0, 48.0)
+}
+
+pub fn new_game_button() -> Rect {
+    let c = vec2(MAP_W / 2.0, TOP_BAR + MAP_H / 2.0);
+    Rect::new(c.x + 10.0, c.y + 64.0, 220.0, 48.0)
 }
 
 // Settings menu.
@@ -354,7 +368,13 @@ pub fn handle_input(game: &mut Game) {
     }
 
     if game.state != GameState::Playing {
-        if (is_key_pressed(KeyCode::R) || is_key_pressed(KeyCode::Enter)) && !game.is_client {
+        let retry = game.state == GameState::GameOver
+            && (is_key_pressed(KeyCode::R) || (click && retry_button().contains(mouse)));
+        let new_game =
+            is_key_pressed(KeyCode::Enter) || (click && new_game_button().contains(mouse));
+        if retry {
+            game.act(Action::RetryWave);
+        } else if new_game && !game.is_client {
             game.act(Action::Restart);
         }
         if is_key_pressed(KeyCode::Escape) {
@@ -369,6 +389,7 @@ pub fn handle_input(game: &mut Game) {
         KeyCode::Key3,
         KeyCode::Key4,
         KeyCode::Key5,
+        KeyCode::Key6,
     ];
     for (key, kind) in hotkeys.into_iter().zip(TowerKind::ALL) {
         if is_key_pressed(key) {

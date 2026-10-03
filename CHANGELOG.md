@@ -3,6 +3,20 @@
 Each release's number is set in `Cargo.toml` and shown in the window title and
 the settings menu. The commit for each release is listed under its heading.
 
+## v5.0
+
+Commit: the one titled "v5.0: Minute Man, retry wave, easier start".
+
+- New starter tower, Minute Man: a rifleman with Rifle, Pistols (dual wield) and Gunner (LMG) paths
+- Arrow and Minute Man are the starter towers: first in the list, cheapest, tagged STARTER
+- Start with 300 gold and 100 lives
+- Enemies 5% slower, bosses 15% slower
+- New games start at x1 speed with auto play off
+- Retry the lost wave from the game over screen
+- Castle map's rug is longer; the Sketch map's narrow left strip is now wide enough for towers
+- Each Support path upgrade on the farm also widens its reach
+- Sandbox wave counter shows the ∞ symbol
+
 ## v4.0
 
 Commit: the one titled "v4.0: main menu, co-op multiplayer, audio, castle map".

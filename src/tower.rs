@@ -13,6 +13,7 @@ pub const SELL_RATIO: f32 = 0.7;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TowerKind {
     Arrow,
+    MinuteMan,
     Cannon,
     Frost,
     Sniper,
@@ -47,6 +48,27 @@ const ARROW_UPGRADES: [[Upgrade; 4]; PATHS] = [
         up("Eagle Eye", "+0.6 range, +1 pierce", 150),
         up("Far Flight", "+2 pierce, +5 damage", 360),
         up("Hawk Eye", "+1.5 range, +10 damage", 900),
+    ],
+];
+
+const MINUTEMAN_UPGRADES: [[Upgrade; 4]; PATHS] = [
+    [
+        up("Long Rifle", "+0.8 range, +6 damage", 90),
+        up("Scoped Rifle", "+12 dmg, +0.6 range", 220),
+        up("AP Rounds", "+25 dmg, pierces 2 enemies", 520),
+        up("Deadeye", "+70 dmg, 2x vs bosses", 1400),
+    ],
+    [
+        up("Sidearm", "Shoots 30% faster", 80),
+        up("Dual Pistols", "Shoots 2 targets at once", 240),
+        up("Quickdraw", "Shoots 40% faster", 520),
+        up("Gunslinger", "4 targets, +10 damage", 1300),
+    ],
+    [
+        up("Drum Mag", "Shoots 25% faster", 100),
+        up("Light MG", "2.5x fire rate, -40% dmg", 300),
+        up("Suppressing Fire", "Hits slow enemies 25%", 650),
+        up("Heavy Gunner", "2x fire rate, +8 damage", 1500),
     ],
 ];
 
@@ -128,15 +150,16 @@ const FARM_UPGRADES: [[Upgrade; 4]; PATHS] = [
     ],
     [
         up("War Drums", "Nearby towers +10% speed", 220),
-        up("Watchtower", "Nearby towers +10% range", 450),
-        up("Armory", "Nearby towers +20% damage", 900),
-        up("Command Post", "+15% more on every buff", 2200),
+        up("Watchtower", "Nearby +10% range, wider", 450),
+        up("Armory", "Nearby +20% damage, wider", 900),
+        up("Command Post", "+15% on all buffs, wider", 2200),
     ],
 ];
 
 impl TowerKind {
-    pub const ALL: [TowerKind; 5] = [
+    pub const ALL: [TowerKind; 6] = [
         Self::Arrow,
+        Self::MinuteMan,
         Self::Cannon,
         Self::Frost,
         Self::Sniper,
@@ -146,6 +169,7 @@ impl TowerKind {
     pub fn name(self) -> &'static str {
         match self {
             Self::Arrow => "Arrow",
+            Self::MinuteMan => "Minute Man",
             Self::Cannon => "Cannon",
             Self::Frost => "Frost",
             Self::Sniper => "Sniper",
@@ -156,6 +180,7 @@ impl TowerKind {
     pub fn description(self) -> &'static str {
         match self {
             Self::Arrow => "Pierces 2 tiles behind",
+            Self::MinuteMan => "Rifleman, 3 gun builds",
             Self::Cannon => "Slow, splash damage",
             Self::Frost => "Freezes all in range",
             Self::Sniper => "Global range, big hits",
@@ -166,6 +191,7 @@ impl TowerKind {
     pub fn cost(self) -> u32 {
         match self {
             Self::Arrow => 50,
+            Self::MinuteMan => 60,
             Self::Cannon => 90,
             Self::Frost => 70,
             Self::Sniper => 120,
@@ -176,6 +202,7 @@ impl TowerKind {
     pub fn color(self) -> Color {
         match self {
             Self::Arrow => Color::from_rgba(230, 190, 70, 255),
+            Self::MinuteMan => Color::from_rgba(60, 100, 190, 255),
             Self::Cannon => Color::from_rgba(200, 90, 60, 255),
             Self::Frost => Color::from_rgba(110, 200, 240, 255),
             Self::Sniper => Color::from_rgba(170, 120, 220, 255),
@@ -186,6 +213,7 @@ impl TowerKind {
     pub fn path_names(self) -> [&'static str; PATHS] {
         match self {
             Self::Arrow => ["Sharp Arrows", "Rapid Fire", "Long Shot"],
+            Self::MinuteMan => ["Rifle", "Pistols", "Gunner"],
             Self::Cannon => ["Big Bombs", "Rapid Reload", "Incendiary"],
             Self::Frost => ["Deep Freeze", "Frostbite", "Shatter"],
             Self::Sniper => ["Full Metal", "Fast Firing", "Ricochet"],
@@ -196,6 +224,7 @@ impl TowerKind {
     pub fn upgrades(self) -> &'static [[Upgrade; 4]; PATHS] {
         match self {
             Self::Arrow => &ARROW_UPGRADES,
+            Self::MinuteMan => &MINUTEMAN_UPGRADES,
             Self::Cannon => &CANNON_UPGRADES,
             Self::Frost => &FROST_UPGRADES,
             Self::Sniper => &SNIPER_UPGRADES,
@@ -205,7 +234,15 @@ impl TowerKind {
 
     /// Whether the tower picks a single target (and so has a targeting mode).
     pub fn has_targeting(self) -> bool {
-        matches!(self, Self::Arrow | Self::Cannon | Self::Sniper)
+        matches!(
+            self,
+            Self::Arrow | Self::MinuteMan | Self::Cannon | Self::Sniper
+        )
+    }
+
+    /// Cheap, reliable towers to open a game with.
+    pub fn is_starter(self) -> bool {
+        matches!(self, Self::Arrow | Self::MinuteMan)
     }
 
     /// Debuff towers only fire when an enemy in range lacks their debuff.
@@ -221,6 +258,12 @@ impl TowerKind {
                 cooldown: 0.7,
                 projectile_speed: 600.0,
                 pierce: 2.0 * TILE,
+                ..Stats::default()
+            },
+            Self::MinuteMan => Stats {
+                damage: 12.0,
+                range: 2.8 * TILE,
+                cooldown: 0.85,
                 ..Stats::default()
             },
             Self::Cannon => Stats {
@@ -396,16 +439,60 @@ fn apply_upgrade(kind: TowerKind, path: usize, tier: u8, s: &mut Stats) {
         (Farm, 1, 2) => (s.interest, s.interest_cap) = (0.08, 200),
         (Farm, 1, 3) => (s.interest, s.interest_cap) = (0.12, 500),
         (Farm, 2, 0) => {
-            // Same reach as a base frost tower.
+            // Same reach as a base frost tower; every tier widens it a little.
             s.buff_radius = TowerKind::Frost.base_stats().range;
             s.buff_speed = 0.10;
         }
-        (Farm, 2, 1) => s.buff_range = 0.10,
-        (Farm, 2, 2) => s.buff_damage = 0.20,
+        (Farm, 2, 1) => {
+            s.buff_range = 0.10;
+            s.buff_radius += 0.25 * TILE;
+        }
+        (Farm, 2, 2) => {
+            s.buff_damage = 0.20;
+            s.buff_radius += 0.25 * TILE;
+        }
         (Farm, 2, 3) => {
             s.buff_speed += 0.15;
             s.buff_range += 0.15;
             s.buff_damage += 0.15;
+            s.buff_radius += 0.4 * TILE;
+        }
+
+        (MinuteMan, 0, 0) => {
+            s.range += 0.8 * TILE;
+            s.damage += 6.0;
+        }
+        (MinuteMan, 0, 1) => {
+            s.damage += 12.0;
+            s.range += 0.6 * TILE;
+        }
+        (MinuteMan, 0, 2) => {
+            s.damage += 25.0;
+            s.penetrate = 2;
+        }
+        (MinuteMan, 0, 3) => {
+            s.damage += 70.0;
+            s.boss_mult = 2.0;
+        }
+        (MinuteMan, 1, 0) => s.cooldown /= 1.3,
+        (MinuteMan, 1, 1) => s.targets = 2,
+        (MinuteMan, 1, 2) => s.cooldown /= 1.4,
+        (MinuteMan, 1, 3) => {
+            s.targets = 4;
+            s.damage += 10.0;
+        }
+        (MinuteMan, 2, 0) => s.cooldown /= 1.25,
+        (MinuteMan, 2, 1) => {
+            s.cooldown /= 2.5;
+            s.damage *= 0.6;
+        }
+        (MinuteMan, 2, 2) => {
+            s.slow = 0.75;
+            s.slow_time = 0.8;
+        }
+        (MinuteMan, 2, 3) => {
+            s.cooldown /= 2.0;
+            s.damage += 8.0;
         }
 
         _ => {}
@@ -476,6 +563,10 @@ pub struct Stats {
     pub stun_time: f32,
     /// Extra enemies a sniper shot bounces to.
     pub bounces: u32,
+    /// Separate enemies a Minute Man shoots per volley.
+    pub targets: u32,
+    /// Extra enemies a Minute Man bullet passes through.
+    pub penetrate: u32,
     pub boss_mult: f32,
     /// Gold paid when a wave is cleared.
     pub income: u32,
@@ -507,6 +598,8 @@ impl Default for Stats {
             burn_time: 0.0,
             stun_time: 0.0,
             bounces: 0,
+            targets: 1,
+            penetrate: 0,
             boss_mult: 1.0,
             income: 0,
             buff_radius: 0.0,
@@ -622,9 +715,10 @@ mod tests {
         let upgraded = TowerKind::Farm.stats([2, 0, 4]);
         assert_eq!(upgraded.income, base.income + 60);
         assert!((upgraded.buff_speed - 0.25).abs() < 1e-5);
-        assert_eq!(
-            upgraded.buff_radius,
-            TowerKind::Frost.stats([0; PATHS]).range
-        );
+        // Each support tier widens the farm's reach beyond the frost-sized base.
+        let frost = TowerKind::Frost.stats([0; PATHS]).range;
+        assert_eq!(TowerKind::Farm.stats([0, 0, 1]).buff_radius, frost);
+        assert!(TowerKind::Farm.stats([0, 0, 2]).buff_radius > frost);
+        assert!((upgraded.buff_radius - (frost + 0.9 * TILE)).abs() < 1e-3);
     }
 }

@@ -154,7 +154,8 @@ impl App {
                             self.game.adopt(*snapshot);
                             self.game.online = true;
                             self.game.is_client = true;
-                            self.game.party = Some(format!("In a party  -  host {}", self.lobby.address.trim()));
+                            self.game.party =
+                                Some(format!("In a party  -  host {}", self.lobby.address.trim()));
                             if matches!(self.screen, Screen::Joining) {
                                 self.screen = Screen::Playing;
                                 self.lobby.busy = false;
@@ -162,9 +163,21 @@ impl App {
                                 self.game.notify("Joined the party");
                                 if std::env::var("MP").as_deref() == Ok("client") {
                                     let want = vec2(700.0, 300.0);
-                                    let mut best = want; let mut bd = f32::MAX;
-                                    for i in -25..25 { for j in -25..25 { let p = want + vec2(i as f32 * 4.0, j as f32 * 4.0); if p.distance(want) < bd && self.game.can_place(p) { bd = p.distance(want); best = p; } } }
-                                    self.game.act(game::Action::Place { kind: tower::TowerKind::Sniper, pos: best });
+                                    let mut best = want;
+                                    let mut bd = f32::MAX;
+                                    for i in -25..25 {
+                                        for j in -25..25 {
+                                            let p = want + vec2(i as f32 * 4.0, j as f32 * 4.0);
+                                            if p.distance(want) < bd && self.game.can_place(p) {
+                                                bd = p.distance(want);
+                                                best = p;
+                                            }
+                                        }
+                                    }
+                                    self.game.act(game::Action::Place {
+                                        kind: tower::TowerKind::Sniper,
+                                        pos: best,
+                                    });
                                 }
                             }
                             self.play_sounds(&sounds);
@@ -278,10 +291,23 @@ async fn main() {
             app.lobby.map = 1;
             app.update_menu_with(Some(LobbyAction::Host));
             app.game.gold = 5000;
-            for (k, x, y) in [(tower::TowerKind::Arrow, 230.0, 300.0), (tower::TowerKind::Cannon, 330.0, 250.0), (tower::TowerKind::Frost, 520.0, 380.0)] {
+            for (k, x, y) in [
+                (tower::TowerKind::Arrow, 230.0, 300.0),
+                (tower::TowerKind::Cannon, 330.0, 250.0),
+                (tower::TowerKind::Frost, 520.0, 380.0),
+            ] {
                 let want = vec2(x, y);
-                let mut best = want; let mut bd = f32::MAX;
-                for i in -25..25 { for j in -25..25 { let p = want + vec2(i as f32 * 4.0, j as f32 * 4.0); if p.distance(want) < bd && app.game.can_place(p) { bd = p.distance(want); best = p; } } }
+                let mut best = want;
+                let mut bd = f32::MAX;
+                for i in -25..25 {
+                    for j in -25..25 {
+                        let p = want + vec2(i as f32 * 4.0, j as f32 * 4.0);
+                        if p.distance(want) < bd && app.game.can_place(p) {
+                            bd = p.distance(want);
+                            best = p;
+                        }
+                    }
+                }
                 app.game.place(k, best);
             }
             app.game.apply(game::Action::ToggleAuto);

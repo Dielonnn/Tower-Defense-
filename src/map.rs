@@ -23,8 +23,10 @@ const SKETCH: [(f32, f32); 13] = [
     (-24.0, 236.0),
     (189.0, 236.0),
     (189.0, 86.0),
-    (80.0, 86.0),
-    (80.0, 395.0),
+    // Moved right of the hand-drawn x=80 so the strip beside x=42 is wide
+    // enough for towers.
+    (92.0, 86.0),
+    (92.0, 395.0),
     (261.0, 395.0),
     (261.0, 297.0),
     (42.0, 297.0),
@@ -35,18 +37,19 @@ const SKETCH: [(f32, f32); 13] = [
     (464.0, 478.0),
 ];
 
-/// The original zigzag map, in 48px grid cells.
+/// The castle map's rug, in 48px grid cells. Longer than the original
+/// zigzag, with every parallel stretch far enough apart for towers.
 const ZIGZAG: [(i32, i32); 10] = [
     (-1, 2),
     (4, 2),
-    (4, 8),
-    (9, 8),
+    (4, 10),
+    (9, 10),
     (9, 3),
     (14, 3),
-    (14, 9),
-    (17, 9),
-    (17, 5),
-    (19, 5),
+    (14, 10),
+    (17, 10),
+    (17, 6),
+    (19, 6),
 ];
 
 pub const MAP_COUNT: usize = 2;
@@ -154,7 +157,7 @@ impl Map {
                 MapTheme::Castle,
                 ZIGZAG.iter().map(|&(c, r)| grid_center(c, r)).collect(),
                 grid_center(0, 2),
-                grid_center(19, 5),
+                grid_center(19, 6),
             ),
         };
         let mut map = Self {
@@ -333,6 +336,61 @@ mod tests {
                 .iter()
                 .all(|p| map.distance_to_path(p.pos) > PATH_WIDTH / 2.0)
         );
+    }
+
+    /// Parallel stretches of track (and the map edges) must either touch or
+    /// leave room for a tower; nothing in between that nobody can use.
+    #[test]
+    fn gaps_between_paths_fit_towers() {
+        let fits = PATH_WIDTH + 2.0 * TOWER_RADIUS + 4.0;
+        for i in 0..MAP_COUNT {
+            let map = Map::new(i);
+            let segs: Vec<(Vec2, Vec2)> = map.waypoints.windows(2).map(|w| (w[0], w[1])).collect();
+            for (a, &(a0, a1)) in segs.iter().enumerate() {
+                for &(b0, b1) in segs.iter().skip(a + 2) {
+                    let both_vertical = a0.x == a1.x && b0.x == b1.x;
+                    let both_horizontal = a0.y == a1.y && b0.y == b1.y;
+                    let (gap, overlap) = if both_vertical {
+                        let lo = a0.y.min(a1.y).max(b0.y.min(b1.y));
+                        let hi = a0.y.max(a1.y).min(b0.y.max(b1.y));
+                        ((a0.x - b0.x).abs(), hi > lo)
+                    } else if both_horizontal {
+                        let lo = a0.x.min(a1.x).max(b0.x.min(b1.x));
+                        let hi = a0.x.max(a1.x).min(b0.x.max(b1.x));
+                        ((a0.y - b0.y).abs(), hi > lo)
+                    } else {
+                        continue;
+                    };
+                    assert!(
+                        !overlap || gap < PATH_WIDTH || gap >= fits,
+                        "{}: paths {gap}px apart leave a strip too thin for towers",
+                        map.name
+                    );
+                }
+                // Same for the space between the track and the map edge.
+                let edge_fits = PATH_WIDTH / 2.0 + 2.0 * TOWER_RADIUS + 2.0;
+                let edge_gaps = if a0.x == a1.x {
+                    [a0.x - MAP_X, MAP_X + MAP_W - a0.x]
+                } else {
+                    [a0.y - MAP_Y, MAP_Y + MAP_H - a0.y]
+                };
+                for e in edge_gaps {
+                    assert!(
+                        e <= PATH_WIDTH / 2.0 + 4.0 || e >= edge_fits,
+                        "{}: path {e}px from the edge leaves a strip too thin for towers",
+                        map.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn castle_map_is_longer_than_before() {
+        let map = Map::new(1);
+        let length: f32 = map.waypoints.windows(2).map(|w| w[0].distance(w[1])).sum();
+        // The original zigzag was 36 tiles long.
+        assert!(length > 40.0 * TILE, "{}", length / TILE);
     }
 
     #[test]

@@ -16,6 +16,7 @@ pub enum Sfx {
     Explosion,
     Frost,
     Sniper,
+    Gunshot,
     EnemyDeath,
     BaseHit,
     Coin,
@@ -27,12 +28,13 @@ pub enum Sfx {
 }
 
 impl Sfx {
-    const ALL: [Sfx; 13] = [
+    const ALL: [Sfx; 14] = [
         Sfx::Arrow,
         Sfx::Cannon,
         Sfx::Explosion,
         Sfx::Frost,
         Sfx::Sniper,
+        Sfx::Gunshot,
         Sfx::EnemyDeath,
         Sfx::BaseHit,
         Sfx::Coin,
@@ -47,7 +49,7 @@ impl Sfx {
     pub fn is_tower(self) -> bool {
         matches!(
             self,
-            Sfx::Arrow | Sfx::Cannon | Sfx::Explosion | Sfx::Frost | Sfx::Sniper
+            Sfx::Arrow | Sfx::Cannon | Sfx::Explosion | Sfx::Frost | Sfx::Sniper | Sfx::Gunshot
         )
     }
 
@@ -55,7 +57,7 @@ impl Sfx {
     /// doesn't turn into noise.
     fn min_gap(self) -> f64 {
         match self {
-            Sfx::Arrow | Sfx::EnemyDeath => 0.06,
+            Sfx::Arrow | Sfx::EnemyDeath | Sfx::Gunshot => 0.06,
             Sfx::Cannon | Sfx::Explosion | Sfx::Sniper | Sfx::Frost => 0.08,
             _ => 0.03,
         }
@@ -182,6 +184,16 @@ fn synth(sfx: Sfx) -> Vec<f32> {
                 let crack = noise.next() * (-t * 60.0).exp();
                 let thump = sine(140.0, t) * (-t * 18.0).exp();
                 crack * 0.9 + thump * 0.6
+            });
+        }
+        Sfx::Gunshot => {
+            // Short sharp pop with a little body.
+            let mut low = 0.0;
+            render(0.16, &mut |t| {
+                low += (noise.next() - low) * 0.3;
+                let crack = noise.next() * (-t * 80.0).exp();
+                let body = low * 1.6 * (-t * 25.0).exp();
+                crack * 0.6 + body + sine(220.0, t) * 0.3 * (-t * 30.0).exp()
             });
         }
         Sfx::EnemyDeath => {

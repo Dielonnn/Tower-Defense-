@@ -9,14 +9,16 @@ use crate::map::{Map, PATH_WIDTH, TILE, TOWER_RADIUS, distance_to_segment, in_ma
 use crate::tower::{Stats, Targeting, Tower, TowerKind};
 use crate::wave::{self, MAX_WAVES, Spawn};
 
-pub const START_GOLD: u32 = 150;
-pub const START_LIVES: u32 = 20;
+pub const START_GOLD: u32 = 300;
+pub const START_LIVES: u32 = 100;
 /// Pause between waves when auto play is on.
 pub const AUTO_DELAY: f32 = 1.5;
 /// How far a sniper shot can bounce to the next enemy.
 const BOUNCE_RANGE: f32 = 2.5 * TILE;
 /// Highest wave the sandbox level selector goes to.
 pub const SANDBOX_MAX_WAVE: u32 = 999;
+/// How far a Minute Man's AP bullet keeps going past its target.
+const PENETRATE_RANGE: f32 = 1.5 * TILE;
 /// Gap between parallel arrows from multi-shot upgrades.
 const ARROW_SPACING: f32 = 7.0;
 
@@ -45,18 +47,33 @@ pub enum GameState {
 /// clients send these to the host, which applies them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Action {
-    Place { kind: TowerKind, pos: Vec2 },
-    Upgrade { tower: u32, path: usize },
-    Sell { tower: u32 },
-    CycleTarget { tower: u32 },
+    Place {
+        kind: TowerKind,
+        pos: Vec2,
+    },
+    Upgrade {
+        tower: u32,
+        path: usize,
+    },
+    Sell {
+        tower: u32,
+    },
+    CycleTarget {
+        tower: u32,
+    },
     StartWave,
     ToggleAuto,
     SetSpeed(u32),
     SetPaused(bool),
-    SandboxSpawn { kind: EnemyKind, count: u32 },
+    SandboxSpawn {
+        kind: EnemyKind,
+        count: u32,
+    },
     SandboxSetWave(u32),
     SandboxClear,
     Restart,
+    /// After losing: go back to just before the last wave started.
+    RetryWave,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -203,6 +220,10 @@ pub struct Game {
     pub outbox: Vec<Action>,
     #[serde(skip)]
     pub request: Option<Request>,
+    /// The game as it was just before the current wave started (host only),
+    /// so a lost wave can be retried.
+    #[serde(skip)]
+    checkpoint: Option<Vec<u8>>,
     /// Part of a multiplayer party (menus don't pause the game).
     #[serde(skip)]
     pub online: bool,
@@ -255,6 +276,7 @@ impl Game {
             sounds: Vec::new(),
             outbox: Vec::new(),
             request: None,
+            checkpoint: None,
             online: false,
             is_client: false,
             party: None,
@@ -263,9 +285,8 @@ impl Game {
 
     /// Starts a fresh game, keeping the player's settings.
     pub fn restart(&mut self, map_index: usize, sandbox: bool) {
+        // New games always start at normal speed with auto play off.
         let mut fresh = Self::with_map(map_index);
-        fresh.speed = self.speed;
-        fresh.auto_play = self.auto_play;
         fresh.sandbox = sandbox;
         fresh.keep_local(self);
         fresh.build_choice = None;
@@ -397,6 +418,7 @@ impl Game {
                 let (map, sandbox) = (self.map_index, self.sandbox);
                 self.restart(map, sandbox);
             }
+            Action::RetryWave => self.retry_wave(),
         }
     }
 
@@ -461,10 +483,36 @@ impl Game {
         self.state == GameState::Playing && !self.wave_active && self.wave < self.max_wave()
     }
 
+    pub fn can_retry_wave(&self) -> bool {
+        self.state == GameState::GameOver && self.checkpoint.is_some()
+    }
+
+    /// Rewinds to just before the lost wave, so the player can adjust their
+    /// defense and try it again.
+    pub fn retry_wave(&mut self) {
+        if !self.can_retry_wave() {
+            return;
+        }
+        let Some(bytes) = self.checkpoint.take() else {
+            return;
+        };
+        let Ok(saved) = bincode::deserialize::<Game>(&bytes) else {
+            return;
+        };
+        self.adopt(saved);
+        self.checkpoint = Some(bytes);
+        self.menu = None;
+        self.flash(&format!(
+            "Back before wave {}. Adjust and try again!",
+            self.wave + 1
+        ));
+    }
+
     pub fn start_wave(&mut self) {
         if !self.can_start_wave() {
             return;
         }
+        self.checkpoint = bincode::serialize(&*self).ok();
         self.wave += 1;
         self.wave_active = true;
         self.spawn_queue = wave::generate(self.wave).into();
@@ -719,6 +767,24 @@ impl Game {
                     sniper_shot(enemies, effects, first, muzzle, &stats);
                 }
 
+                TowerKind::MinuteMan => {
+                    let ranked = rank_targets(enemies, &in_range, tower.targeting, tower.pos);
+                    let Some(&first) = ranked.first() else {
+                        continue;
+                    };
+                    let aim = enemies[first].pos - tower.pos;
+                    tower.angle = aim.y.atan2(aim.x);
+                    if tower.cooldown > 0.0 {
+                        continue;
+                    }
+                    tower.cooldown = stats.cooldown;
+                    tower.since_shot = 0.0;
+                    sounds.push(Sfx::Gunshot);
+                    for &i in ranked.iter().take(stats.targets.max(1) as usize) {
+                        minuteman_shot(enemies, effects, i, tower.pos, &stats);
+                    }
+                }
+
                 TowerKind::Arrow | TowerKind::Cannon => {
                     let Some(i) = pick_target(enemies, &in_range, tower.targeting, tower.pos)
                     else {
@@ -910,13 +976,13 @@ fn effective_stats(towers: &[Tower], i: usize) -> Stats {
     s
 }
 
-/// Index of the enemy passing `filter` that `mode` prefers most.
-fn pick_target(
+/// Indices of enemies passing `filter`, most preferred by `mode` first.
+fn rank_targets(
     enemies: &[Enemy],
     filter: &impl Fn(&Enemy) -> bool,
     mode: Targeting,
     origin: Vec2,
-) -> Option<usize> {
+) -> Vec<usize> {
     // Higher is better; the second value breaks ties.
     let score = |e: &Enemy| -> (f32, f32) {
         match mode {
@@ -935,15 +1001,75 @@ fn pick_target(
             }
         }
     };
-    enemies
+    let mut ranked: Vec<(usize, (f32, f32))> = enemies
         .iter()
         .enumerate()
         .filter(|(_, e)| filter(e))
-        .max_by(|a, b| {
-            let (sa, sb) = (score(a.1), score(b.1));
-            sa.0.total_cmp(&sb.0).then(sa.1.total_cmp(&sb.1))
-        })
-        .map(|(i, _)| i)
+        .map(|(i, e)| (i, score(e)))
+        .collect();
+    ranked.sort_by(|a, b| b.1.0.total_cmp(&a.1.0).then(b.1.1.total_cmp(&a.1.1)));
+    ranked.into_iter().map(|(i, _)| i).collect()
+}
+
+/// Index of the enemy passing `filter` that `mode` prefers most.
+fn pick_target(
+    enemies: &[Enemy],
+    filter: &impl Fn(&Enemy) -> bool,
+    mode: Targeting,
+    origin: Vec2,
+) -> Option<usize> {
+    rank_targets(enemies, filter, mode, origin).first().copied()
+}
+
+/// A Minute Man bullet: instant hit on `target`, optionally passing through
+/// enemies right behind it.
+fn minuteman_shot(
+    enemies: &mut [Enemy],
+    effects: &mut Vec<Effect>,
+    target: usize,
+    from: Vec2,
+    s: &Stats,
+) {
+    let target_pos = enemies[target].pos;
+    let dir = (target_pos - from).normalize_or_zero();
+    let muzzle = from + dir * 20.0;
+    let mut hits = vec![target];
+    if s.penetrate > 0 {
+        let end = target_pos + dir * PENETRATE_RANGE;
+        let mut behind: Vec<(usize, f32)> = enemies
+            .iter()
+            .enumerate()
+            .filter(|(i, e)| {
+                *i != target
+                    && e.alive()
+                    && distance_to_segment(e.pos, target_pos, end) <= e.kind.radius() + 4.0
+            })
+            .map(|(i, e)| (i, e.pos.distance(target_pos)))
+            .collect();
+        behind.sort_by(|a, b| a.1.total_cmp(&b.1));
+        hits.extend(behind.iter().take(s.penetrate as usize).map(|(i, _)| *i));
+    }
+    let mut tracer_end = target_pos;
+    for i in hits {
+        let e = &mut enemies[i];
+        let mult = if e.kind == EnemyKind::Boss {
+            s.boss_mult
+        } else {
+            1.0
+        };
+        e.hit(s.damage * mult);
+        if s.slow < 1.0 {
+            e.apply_slow(s.slow, s.slow_time);
+        }
+        if e.pos.distance(muzzle) > tracer_end.distance(muzzle) {
+            tracer_end = e.pos;
+        }
+    }
+    effects.push(Effect::line(
+        muzzle,
+        tracer_end,
+        Color::from_rgba(255, 225, 140, 255),
+    ));
 }
 
 /// Instant hit on `first`, then bounces to nearby enemies.
@@ -1343,5 +1469,101 @@ pub mod tests {
         assert_eq!(client.tower_volume, 0.6);
         assert_eq!(client.selected, Some(host.towers[0].id));
         assert!(!client.map.waypoints.is_empty());
+    }
+
+    #[test]
+    fn new_games_start_with_300_gold_100_lives_normal_speed_no_auto() {
+        let mut game = Game::new();
+        game.apply(Action::SetSpeed(3));
+        game.apply(Action::ToggleAuto);
+        game.apply(Action::Restart);
+        assert_eq!((game.gold, game.lives), (300, 100));
+        assert_eq!(game.speed, 1);
+        assert!(!game.auto_play);
+    }
+
+    #[test]
+    fn minute_man_dual_pistols_shoot_two_targets() {
+        let mut game = Game::new();
+        let origin = vec2(500.0, 300.0);
+        add_tower(&mut game, TowerKind::MinuteMan, origin);
+        game.towers[0].tiers = [0, 2, 0];
+        let a = enemy_at(&mut game, EnemyKind::Tank, origin + vec2(60.0, 0.0));
+        let b = enemy_at(&mut game, EnemyKind::Tank, origin + vec2(-60.0, 0.0));
+        let c = enemy_at(&mut game, EnemyKind::Tank, origin + vec2(0.0, 70.0));
+        game.update_towers(0.0);
+        let hurt = [a, b, c]
+            .iter()
+            .filter(|&&id| {
+                let e = game.enemies.iter().find(|e| e.id == id).unwrap();
+                e.hp < e.max_hp
+            })
+            .count();
+        assert_eq!(hurt, 2);
+        assert!(game.sounds.contains(&Sfx::Gunshot));
+    }
+
+    #[test]
+    fn minute_man_ap_rounds_pierce() {
+        let mut game = Game::new();
+        let origin = vec2(500.0, 300.0);
+        add_tower(&mut game, TowerKind::MinuteMan, origin);
+        game.towers[0].tiers = [3, 0, 0];
+        let ids: Vec<u32> = (0..4)
+            .map(|k| {
+                enemy_at(
+                    &mut game,
+                    EnemyKind::Tank,
+                    origin + vec2(80.0 + k as f32 * 20.0, 0.0),
+                )
+            })
+            .collect();
+        game.enemies
+            .iter_mut()
+            .find(|e| e.id == ids[0])
+            .unwrap()
+            .traveled = 100.0;
+        game.update_towers(0.0);
+        let hurt: Vec<bool> = ids
+            .iter()
+            .map(|&id| {
+                let e = game.enemies.iter().find(|e| e.id == id).unwrap();
+                e.hp < e.max_hp
+            })
+            .collect();
+        // The target plus the two right behind it.
+        assert_eq!(hurt, vec![true, true, true, false]);
+    }
+
+    #[test]
+    fn retry_wave_rewinds_to_before_the_lost_wave() {
+        let mut game = Game::new();
+        game.place(TowerKind::Arrow, grass(&game));
+        for _ in 0..2 {
+            game.start_wave();
+            run(&mut game, 120.0);
+        }
+        let (gold, towers) = (game.gold, game.towers.len());
+        game.lives = 1;
+        game.start_wave();
+        run(&mut game, 120.0);
+        assert_eq!(game.state, GameState::GameOver);
+        assert!(game.can_retry_wave());
+        game.apply(Action::RetryWave);
+        assert_eq!(game.state, GameState::Playing);
+        assert_eq!(game.wave, 2, "ready to replay wave 3");
+        assert_eq!(
+            (game.gold, game.lives, game.towers.len()),
+            (gold, 1, towers)
+        );
+        assert!(game.enemies.is_empty() && !game.wave_active);
+        game.start_wave();
+        assert_eq!(game.wave, 3);
+    }
+
+    #[test]
+    fn enemies_are_slower_bosses_most_of_all() {
+        assert!((EnemyKind::Grunt.speed() - 85.5).abs() < 1e-3);
+        assert!((EnemyKind::Boss.speed() - 29.75).abs() < 1e-3);
     }
 }

@@ -42,7 +42,7 @@ no installer or extra files needed.
 The game opens on the main menu. Pick a map (Sketch or Castle) and a mode
 (Normal or Sandbox), then press **Play**, or host or join a party.
 
-You start with 150 gold and 20 lives. Killing enemies earns gold, and
+You start with 300 gold and 100 lives. Killing enemies earns gold, and
 clearing a wave pays a bonus. Enemies that reach the castle at the end of
 the path damage it and cost you lives (tanks 2, bosses 10).
 
@@ -51,7 +51,7 @@ path or another tower.
 
 | Input | Action |
 | --- | --- |
-| `1`-`5` or sidebar buttons | Pick a tower to place |
+| `1`-`6` or sidebar buttons | Pick a tower to place |
 | Left click on grass | Place it (hold Shift to place several) |
 | Right click / `Esc` / Cancel button | Stop placing, or deselect |
 | Left click on a tower | Open its upgrade panel |
@@ -63,7 +63,8 @@ path or another tower.
 | `F` | Cycle game speed (x1, x2, x3) |
 | `P` | Pause |
 | `Esc` (nothing selected) or Settings button | Open the settings menu |
-| `R` | Restart after game over or victory |
+| `R` / Retry button | After losing: rewind to just before the lost wave and try it again |
+| `Enter` / New game button | Start over after losing or winning |
 
 ### Settings menu
 
@@ -92,7 +93,7 @@ can build, upgrade, sell or start waves.
 ### Sandbox mode
 
 For testing builds. Towers and upgrades are free, lives never drop, and waves
-go on forever (the counter shows "Infinite"). The sidebar gets extra controls to spawn any enemy (Shift
+go on forever (the counter shows ∞). The sidebar gets extra controls to spawn any enemy (Shift
 for five at once), pick which wave comes next (this also sets how tough
 spawned enemies are, up to wave 99) and clear the field.
 
@@ -100,13 +101,14 @@ spawned enemies are, up to wave 99) and clear the field.
 
 | Tower | Cost | Notes |
 | --- | --- | --- |
-| Arrow | 50 | Arrows fly through their target and keep going 2 tiles, hitting everything on the way. Multi-shot upgrades fire a tight parallel volley |
+| Arrow (starter) | 50 | Arrows fly through their target and keep going 2 tiles, hitting everything on the way. Multi-shot upgrades fire a tight parallel volley |
+| Minute Man (starter) | 60 | A rifleman with three gun builds: rifle, dual pistols or light machine gun |
 | Cannon | 90 | Slow, splash damage |
 | Frost | 70 | Pulses to freeze every enemy in range. A thawed enemy can't be refrozen for 1.5s. Holds fire while nothing in range can be frozen |
 | Sniper | 120 | Global range, heavy damage, fires slowly |
 | Farm | 150 | No attack. Pays 40 gold every time a wave is cleared |
 
-Arrow, Cannon and Sniper have a targeting mode. Frost hits everything in
+Arrow, Minute Man, Cannon and Sniper have a targeting mode. Frost hits everything in
 range, so it doesn't need one.
 
 ### Upgrades
@@ -118,10 +120,11 @@ labels such as `2-0-3` show the tiers bought on each path.
 | Tower | Path 1 | Path 2 | Path 3 |
 | --- | --- | --- | --- |
 | Arrow | Sharp Arrows: damage | Rapid Fire: speed and multi-shot | Long Shot: range and pierce |
+| Minute Man | Rifle: range, damage, armor-piercing rounds, boss killer | Pistols: dual wield, shoots several targets at once | Gunner: light machine gun, very fast fire, suppressing slow |
 | Cannon | Big Bombs: damage, blast, stun | Rapid Reload: fire rate | Incendiary: burning |
 | Frost | Deep Freeze: longer freezes, faster pulses | Frostbite: slows enemies after they thaw | Shatter: damage, hit enemies take extra damage |
 | Sniper | Full Metal: damage, boss killer | Fast Firing: fire rate | Ricochet: bouncing shots, gold per wave |
-| Farm | Crops: more gold per wave | Bank: interest on your gold each wave | Support: boosts attack speed, range and damage of towers nearby (frost-sized radius); buffed towers show a green arrow badge |
+| Farm | Crops: more gold per wave | Bank: interest on your gold each wave | Support: boosts attack speed, range and damage of towers nearby (frost-sized radius); buffed towers show a green arrow badge. Each tier also widens its reach |
 
 ### Enemies
 
@@ -136,7 +139,7 @@ Enemy health grows every wave.
 
 - **Sketch** (default): a long meadow path that loops over itself twice, with trees and rocks.
 - **Castle**: a throne room. The track is a royal rug lined with torches, and
-  the path is short, so enemies reach the throne much sooner. Harder.
+  the path is shorter, so enemies reach the throne sooner. Harder.
 
 Trees, rocks, torches and pillars block tower placement.
 
