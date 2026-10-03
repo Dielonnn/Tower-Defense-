@@ -1,9 +1,12 @@
 # Changelog
 
-Each release is tagged in git (`v1.0`, `v2.0`, ...) and its number is shown in
-the window title and the settings menu.
+Each release's number is set in `Cargo.toml` and shown in the window title and
+the settings menu. The commit for each release is listed under its heading.
 
 ## v3.0
+
+Commit: the one titled "Label releases: v3.0".
+
 
 - Enemies damage the castle at the end of the path (shake, flash, "-N")
 - Sketch map straightened so every segment is horizontal or vertical
@@ -16,6 +19,9 @@ the window title and the settings menu.
 
 ## v2.0
 
+Commit: `2cf5ffb`. Built before version labels, so the game itself doesn't show a number.
+
+
 - Hand-drawn sketch map is the new default; the old zigzag map is still selectable
 - Towers can be placed anywhere on the grass instead of on a grid
 - Every tower has 3 upgrade paths with 4 tiers each (2 paths max, one past tier 2)
@@ -26,6 +32,9 @@ the window title and the settings menu.
 - Auto play for waves and a visible cancel button while placing towers
 
 ## v1.0
+
+Commit: `d0f855b`. Built before version labels, so the game itself doesn't show a number.
+
 
 - First version: grid-based tower defense with Arrow, Cannon, Frost and Sniper
   towers, 3 upgrade levels, selling, 30 waves with runners, tanks and bosses,
